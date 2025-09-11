@@ -238,21 +238,28 @@ open class ScrollerView<A : ScrollerAttr, E : ScrollerEvent> :
                 it.flexNode.flexWrap = flexNode.flexWrap
                 it.flexNode.setPadding(StyleSpace.Type.TOP, flexNode.getPadding(StyleSpace.Type.TOP))
                 it.flexNode.setPadding(StyleSpace.Type.LEFT, flexNode.getPadding(StyleSpace.Type.LEFT))
-                it.flexNode.setPadding(StyleSpace.Type.TOP, flexNode.getPadding(StyleSpace.Type.TOP))
+                it.flexNode.setPadding(StyleSpace.Type.RIGHT, flexNode.getPadding(StyleSpace.Type.RIGHT))
                 it.flexNode.setPadding(StyleSpace.Type.BOTTOM, flexNode.getPadding(StyleSpace.Type.BOTTOM))
+                if (this.attr.needResetContentViewPadding) {
+                    it.flexNode.resetPaddingToZero()  // 清除scrollContentView.FlexNode 设置的 padding
+                }
             }
             if (flexNode.flexDirection == FlexDirection.ROW
                 || flexNode.flexDirection == FlexDirection.ROW_REVERSE
             ) {
                 super.addChild(contentView!!, {
                     attr {
-                        absolutePosition(top = 0f, left = 0f, bottom = 0f)
+                        if (!this@ScrollerView.attr.needResetContentViewPadding) {
+                            absolutePosition(top = 0f, left = 0f, bottom = 0f)
+                        }
                     }
                 }, 0)
             } else {
                 super.addChild(contentView!!, {
                     attr {
-                        absolutePosition(top = 0f, left = 0f, right = 0f)
+                        if (!this@ScrollerView.attr.needResetContentViewPadding) {
+                            absolutePosition(top = 0f, left = 0f, right = 0f)
+                        }
                     }
                 }, 0)
             }
@@ -344,6 +351,13 @@ open class ScrollerAttr : ContainerAttr() {
     var visibleAreaIgnoreTopMargin = 0f
     var visibleAreaIgnoreBottomMargin = 0f
     internal var bouncesEnable = true
+    var needResetContentViewPadding = false
+        internal set
+
+    // Scoller padding的UI效果是否有问题，设置为true表示padding有问题，需要修复
+    fun scrollerPaddingNeedFix(enable: Boolean) {
+        needResetContentViewPadding = enable
+    }
 
     // 是否允许手势滚动
     fun scrollEnable(value: Boolean) {

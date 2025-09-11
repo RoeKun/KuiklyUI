@@ -108,11 +108,17 @@ void KRScrollerView::SetRenderViewFrame(const KRRect &frame) {
             is_need_set_content_offset_ = false;
         }
     }
+    // 调整ContentView在ScollView 的布局位置
+    if (content_view_) {
+        KTRect content_frame = content_view_->GetFrame();
+        SetArkUIPadding(content_view_->GetNode(), content_frame.x, content_frame.y, 0, 0);
+    }
 }
 
 ArkUI_NodeHandle KRScrollerView::CreateNode() {
     auto node = kuikly::util::GetNodeApi()->createNode(ARKUI_NODE_SCROLL);
     // Scroll 默认会对ContentView居中展示, 这里强制不居中
+    // 与ContentView产生的布局位置冲突，通过为ContentView设置padding来解决
     kuikly::util::SetArkUIStackNodeContentAlignment(node, ArkUI_Alignment::ARKUI_ALIGNMENT_TOP_START);
     return node;
 }

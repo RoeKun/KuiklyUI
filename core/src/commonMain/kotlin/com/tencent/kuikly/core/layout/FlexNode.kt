@@ -237,6 +237,11 @@ class FlexNode {
         return flexStyle.padding[spacingType]
     }
 
+    fun resetPaddingToZero() {
+        // 此时children 是null，无需 markDirty
+        flexStyle.padding.setPaddingToZero()
+    }
+
     fun setBorder(spacingType: StyleSpace.Type, value: Float) {
         if (!getBorder(spacingType).valueEquals(value)) {
             setStyleSpace(spacingType, flexStyle.border, value)

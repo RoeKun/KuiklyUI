@@ -89,6 +89,15 @@ class StyleSpace {
         return spacing[spacingType.ordinal]
     }
 
+    fun setPaddingToZero(): Boolean {
+        if (valueFlags == 0) {
+            return false
+        }
+        spacing.fill(0f)
+        valueFlags = 0
+        return true
+    }
+
     enum class Type(value: Int) {
         LEFT(0),
         TOP(1),
