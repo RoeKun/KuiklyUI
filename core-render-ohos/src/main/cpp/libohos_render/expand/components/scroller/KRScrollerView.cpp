@@ -18,6 +18,7 @@
 #include "libohos_render/expand/components/view/KRView.h"
 #include "libohos_render/foundation/type/KRRenderValue.h"
 #include "libohos_render/utils/KRJSONObject.h"
+#include "libohos_render/utils/KRViewUtil.h"
 
 
 #ifdef __cplusplus
@@ -108,6 +109,12 @@ void KRScrollerView::SetRenderViewFrame(const KRRect &frame) {
             kuikly::util::SetArkUIContentOffset(GetNode(), first_offset_x_, first_offset_y_, first_animate_, first_duration_);
             is_need_set_content_offset_ = false;
         }
+    }
+
+    // 抵消布局方向的设置，ContentView通过设置padding强制 对齐跨端页面的布局起点
+    if (content_view_) {
+        KRRect content_frame = content_view_->GetFrame();
+        kuikly::util::SetArkUIPadding(content_view_->GetNode(), content_frame.x, content_frame.y, 0, 0);
     }
 }
 
