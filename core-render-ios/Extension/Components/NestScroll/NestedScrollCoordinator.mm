@@ -54,6 +54,9 @@ static CGFloat const kNestedScrollFloatThreshold = 0.1;
 /// Whether should `unlock` the innerScrollView
 @property (nonatomic, assign) BOOL shouldUnlockInnerScrollView;
 
+/// 新增： 标记本次手势中 inner 是否已经到达滚动方向的边缘
+@property (nonatomic, assign) BOOL innerReachedEdge;
+
 @end
 
 @implementation NestedScrollCoordinator
@@ -101,6 +104,8 @@ static CGFloat const kNestedScrollFloatThreshold = 0.1;
             (presetPriority == priority));
 }
 
+/// 判断是否已经滚动到边缘
+/// 问题：如果是PageList，那么判断的边缘是否只是一个Page
 static inline BOOL hasScrollToTheDirectionEdge(const UIScrollView *scrollview,
                                                const NestedScrollDirection direction) {
     if (NestedScrollDirectionDown == direction) {
@@ -247,11 +252,14 @@ static inline void lockScrollView(const UIScrollView<NestedScrollProtocol> *scro
     
     // 2. Lock inner scrollview if necessary
     if ([self isDirection:direction hasPriority:NestedScrollPriorityParent]) {
+        
+        BOOL innerReachedEdgeNow = NO;
         if (isOuter || (isInner && !self.shouldUnlockInnerScrollView)) {
             if (hasScrollToTheDirectionEdge(outerScrollView, direction)) {
                 // Outer has slipped to the edge,
                 // need to further determine whether the Inner can still slide
                 if (hasScrollToTheDirectionEdge(innerScrollView, direction)) {
+                    innerReachedEdgeNow = YES;
                     self.shouldUnlockInnerScrollView = NO;
                     NSLogTrace(@"set lock inner !");
                 } else {
@@ -270,6 +278,17 @@ static inline void lockScrollView(const UIScrollView<NestedScrollProtocol> *scro
             // some times inner may generate a weired huge contentOffset, so double check it
             lastContentOffset = clampContentOffsetToBounds(innerScrollView, lastContentOffset, direction);
             lockScrollView(innerScrollView, lastContentOffset);
+        }
+        
+        // 新增：如果 Inner 已经到达边缘，强制锁定 Outer
+        if (innerReachedEdgeNow) {
+            // 使用 outer 当前的 lContentOffset（即上一次合法值）进行锁定
+            CGPoint outerLastOffset = outerScrollView.lContentOffset;
+            outerLastOffset = clampContentOffsetToBounds(outerScrollView, outerLastOffset, direction);
+            lockScrollView(outerScrollView, outerLastOffset);
+            // 防止后面的 cascade‑unlock 误触发
+            outerScrollView.cascadeLockForNestedScroll = NO;
+            NSLogTrace(@">>> forced lock outer because inner hit edge");
         }
         
         // Handle the scenario where the Inner can slide when the Outer's bounces on.
@@ -317,6 +336,8 @@ static inline void lockScrollView(const UIScrollView<NestedScrollProtocol> *scro
             NSLogTrace(@"lock outer due to cascadeLock");
             innerScrollView.cascadeLockForNestedScroll = NO;
         }
+        
+        self.innerReachedEdge = innerReachedEdgeNow;
     }
     
     // 3. Lock outer scrollview if necessary
@@ -324,7 +345,8 @@ static inline void lockScrollView(const UIScrollView<NestedScrollProtocol> *scro
              || [self isDirection:direction hasPriority:NestedScrollPrioritySelfOnly]) {
         if (isInner || (isOuter && !self.shouldUnlockOuterScrollView)) {
             if (hasScrollToTheDirectionEdge(innerScrollView, direction)) {
-                self.shouldUnlockOuterScrollView = YES;
+                // 新增：Inner 在边缘 → 不要解锁 Outer，保持页面不翻动
+                self.shouldUnlockOuterScrollView = NO;
                 NSLogTrace(@"set unlock outer ~");
             } else if (outerScrollView.activeInnerScrollView) {
                 self.shouldUnlockOuterScrollView = NO;
@@ -419,11 +441,21 @@ static inline void lockScrollView(const UIScrollView<NestedScrollProtocol> *scro
     if (self.outerScrollView.shouldHaveActiveInner) {
         self.outerScrollView.shouldHaveActiveInner = NO;
     }
+    
+    // 新增：清除本次手势中 inner 是否已到达边缘的标记
+    self.innerReachedEdge = NO;
+}
+
+- (void)scrollViewDidEndDecelerating:(UIScrollView *)scrollView {
+    // 新增：清除本次手势中 inner 是否已到达边缘的标记
+    self.innerReachedEdge = NO;
 }
 
 
 #pragma mark - NestedScrollGestureDelegate
 
+/// 判断是否采用嵌套滚动
+/// 发生场景：在内外层手势冲突时，识别判断是否启用嵌套滚动
 - (BOOL)shouldRecognizeScrollGestureSimultaneouslyWithView:(UIView *)view {
     // Setup outer scrollview if needed
     if (!self.outerScrollView) {
