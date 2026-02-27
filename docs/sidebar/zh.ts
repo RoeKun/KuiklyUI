@@ -101,6 +101,11 @@ export const zhSidebar = sidebar({
                                     text: "性能优化",
                                     collapsible: true,
                                     children: ["kuikly-perf-guidelines.md", "android-start-guide.md"]
+                                },
+                                {
+                                    text: "首屏启动优化",
+                                    collapsible: true,
+                                    children: ["turboDisplay.md"]
                                 }
                             ]
                         },
