@@ -281,12 +281,52 @@ KUIKLY_NESTEDSCROLL_PROTOCOL_PROPERTY_IMP
 #endif // [macOS]
 
 - (BOOL)scrollViewShouldScrollToTop:(UIScrollView *)scrollView {
+    NSLog(@"[ScrollToTop-C] scrollViewShouldScrollToTop 被触发! self=%@", self);
+    
+    // 方案 C：完全自己接管 scrollsToTop，内外层同时启动回顶动画
+    // 关键：不依赖系统 return YES 的动画调度，全部用 setContentOffset 手动控制
+    //       这样内外层动画在同一个 runloop cycle 启动，视觉上同时回顶
+    
+    // 1. 收集所有需要回顶的 KRScrollView（包括自己）
+    NSMutableArray<KRScrollView *> *allScrollViews = [NSMutableArray array];
+    [self p_collectAllKRScrollViews:self result:allScrollViews];
+    
+    // 2. 标记所有 ScrollView 跳过嵌套滚动协调器的锁定
+    //    否则协调器的 scrollViewDidScroll 会把外层的 offset 变化锁回去
+    for (KRScrollView *sv in allScrollViews) {
+        sv.skipNestScrollLock = YES;
+    }
+    
+    // 3. 在同一时刻让所有 ScrollView 启动回顶动画
+    for (KRScrollView *sv in allScrollViews) {
+        if (!CGPointEqualToPoint(sv.contentOffset, CGPointZero)) {
+            NSLog(@"[ScrollToTop-C] 回顶: %@ offset=(%.1f, %.1f) isSelf=%@",
+                  sv, sv.contentOffset.x, sv.contentOffset.y,
+                  (sv == self) ? @"YES" : @"NO");
+            [sv setContentOffset:CGPointZero animated:YES];
+        }
+    }
+    
+    // 3. 如果有 Kotlin 侧回调，通知 Kotlin
     if (_css_scrollToTop) {
         _css_scrollToTop(nil);
-        return NO; // Handled by Kotlin side
     }
-    return YES;
+    
+    // 4. 返回 NO —— 我们已经自己处理了外层的回顶，不需要系统再做一次
+    return NO;
 }
+
+#if !TARGET_OS_OSX
+/// 递归收集所有 KRScrollView（包括自己）
+- (void)p_collectAllKRScrollViews:(UIView *)parentView result:(NSMutableArray<KRScrollView *> *)result {
+    if ([parentView isKindOfClass:[KRScrollView class]]) {
+        [result addObject:(KRScrollView *)parentView];
+    }
+    for (UIView *subview in parentView.subviews) {
+        [self p_collectAllKRScrollViews:subview result:result];
+    }
+}
+#endif
     
 - (void)scrollViewWillBeginDragging:(UIScrollView *)scrollView {
     self.skipNestScrollLock = NO;
@@ -337,6 +377,17 @@ KUIKLY_NESTEDSCROLL_PROTOCOL_PROPERTY_IMP
 }
 
 - (void)scrollViewDidEndScrollingAnimation:(UIScrollView *)scrollView {
+    // scrollToTop 回顶动画结束后，恢复嵌套滚动协调器的锁定逻辑
+    NSMutableArray<KRScrollView *> *allScrollViews = [NSMutableArray array];
+    [self p_collectAllKRScrollViews:self result:allScrollViews];
+    
+    // 2. 标记所有 ScrollView 跳过嵌套滚动协调器的锁定
+    //    否则协调器的 scrollViewDidScroll 会把外层的 offset 变化锁回去
+    for (KRScrollView *sv in allScrollViews) {
+        sv.skipNestScrollLock = NO;
+    }
+    
+    
     if (_css_scrollEnd) {
         _css_scrollEnd([self p_generateEventBaseParams]);
     }
