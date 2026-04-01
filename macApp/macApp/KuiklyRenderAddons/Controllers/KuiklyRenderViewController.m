@@ -387,10 +387,6 @@ static const NSInteger kBytesToMegabytes = 1024 * 1024;
     };
 }
 
-- (NSString *)turboDisplayKey {
-    return self.pageName;
-}
-
 #pragma mark - UI Factory Methods
 
 - (NSProgressIndicator *)createLoadingIndicator {

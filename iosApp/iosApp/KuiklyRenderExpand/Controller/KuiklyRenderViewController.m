@@ -252,17 +252,5 @@
     return pageData;
 }
 
-- (NSString *)turboDisplayKey {
-    return _pageName;
-}
-
-- (KRTurboDisplayConfig *)configureTurboDisplay {
-    KRTurboDisplayConfig *config = [[KRTurboDisplayConfig alloc] init];
-//    [config enableDelayedDiff];
-//    [config enableAutoUpdateTurboDisplay];
-//    [config disablePersistentRealTree];
-    return config;
-}
-
 
 @end
