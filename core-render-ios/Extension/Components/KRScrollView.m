@@ -243,6 +243,20 @@ KUIKLY_NESTEDSCROLL_PROTOCOL_PROPERTY_IMP
     [self p_dispatchScrollEventIfNeed];
 }
 
+// 🔍 核心日志：追踪每一次 contentInset 的变化
+- (void)setContentInset:(UIEdgeInsets)contentInset {
+    UIEdgeInsets oldInset = self.contentInset;
+    [super setContentInset:contentInset];
+    // 只在 inset 确实发生变化时打印日志
+    if (!UIEdgeInsetsEqualToEdgeInsets(oldInset, contentInset)) {
+        NSLog(@"[InsetTrack] setContentInset: {%.1f, %.1f, %.1f, %.1f} → {%.1f, %.1f, %.1f, %.1f}, offset={%.1f, %.1f}, caller=%@",
+              oldInset.top, oldInset.left, oldInset.bottom, oldInset.right,
+              contentInset.top, contentInset.left, contentInset.bottom, contentInset.right,
+              self.contentOffset.x, self.contentOffset.y,
+              [NSThread callStackSymbols][2]);
+    }
+}
+
 - (void)setContentOffset:(CGPoint)contentOffset animated:(BOOL)animated {
     [_ku_coreAnimator stop];
     _ku_coreAnimator = nil;
@@ -293,6 +307,10 @@ KUIKLY_NESTEDSCROLL_PROTOCOL_PROPERTY_IMP
     self.lContentOffset = scrollView.contentOffset;
 
     _isCurrentlyDragging = YES;
+    NSLog(@"[InsetTrack] scrollViewWillBeginDragging: offset={%.1f, %.1f}, inset={%.1f, %.1f, %.1f, %.1f}",
+          scrollView.contentOffset.x, scrollView.contentOffset.y,
+          scrollView.contentInset.top, scrollView.contentInset.left,
+          scrollView.contentInset.bottom, scrollView.contentInset.right);
     [_ku_coreAnimator stop];
     _ku_coreAnimator = nil;
     if (_css_dragBegin) {
@@ -302,6 +320,10 @@ KUIKLY_NESTEDSCROLL_PROTOCOL_PROPERTY_IMP
 
 - (void)scrollViewDidEndDragging:(UIScrollView *)scrollView willDecelerate:(BOOL)decelerate {
     _isCurrentlyDragging = NO;
+    NSLog(@"[InsetTrack] scrollViewDidEndDragging: decelerate=%d, offset={%.1f, %.1f}, inset={%.1f, %.1f, %.1f, %.1f}",
+          decelerate, scrollView.contentOffset.x, scrollView.contentOffset.y,
+          scrollView.contentInset.top, scrollView.contentInset.left,
+          scrollView.contentInset.bottom, scrollView.contentInset.right);
     if (!decelerate) { // 滑动结束
         BOOL animating = [_ku_coreAnimator isAnimating];
         if (_css_scrollEnd && !animating) {
@@ -321,6 +343,10 @@ KUIKLY_NESTEDSCROLL_PROTOCOL_PROPERTY_IMP
 }
 
 - (void)scrollViewDidEndDecelerating:(UIScrollView *)scrollView {
+    NSLog(@"[InsetTrack] scrollViewDidEndDecelerating: offset={%.1f, %.1f}, inset={%.1f, %.1f, %.1f, %.1f}",
+          scrollView.contentOffset.x, scrollView.contentOffset.y,
+          scrollView.contentInset.top, scrollView.contentInset.left,
+          scrollView.contentInset.bottom, scrollView.contentInset.right);
     BOOL animating = [_ku_coreAnimator isAnimating];
     if (_css_scrollEnd && !animating) {
         _css_scrollEnd([self p_generateEventBaseParams]);
@@ -450,13 +476,38 @@ KUIKLY_NESTEDSCROLL_PROTOCOL_PROPERTY_IMP
     CGPoint contentOffset = CGPointMake([points.firstObject doubleValue], [points[1] doubleValue]);
     [self p_setTargetContentOffsetIfNeed:contentOffset];
     if (damping || curveSpecified) {
+        NSLog(@"[InsetTrack] css_contentOffset: spring target={%.1f, %.1f}, 当前 inset={%.1f, %.1f, %.1f, %.1f}",
+              contentOffset.x, contentOffset.y,
+              self.contentInset.top, self.contentInset.left, self.contentInset.bottom, self.contentInset.right);
         [self p_springAnimationWithContentOffset:contentOffset duration:duration damping:damping velocity:velocity curve:curve];
         return ;
     }
-    UIEdgeInsets newContentInsets = [self maxEdgeInsetsWithContentOffset:contentOffset];
-    if (!UIEdgeInsetsEqualToEdgeInsets(self.contentInset, newContentInsets)) {
-        self.contentInset = newContentInsets;
+    if (animated) {
+        // animated=YES 时 UIKit 的 setContentOffset:animated:YES 内部会把目标 offset
+        // clamp 到 [-contentInset.left, maxOffset+contentInset.right] 范围，
+        // 如果目标 offset 是负值（如 -100）而 contentInset.left=0，动画目标会被截断到 0。
+        // 因此仅在此场景下需要临时扩大 contentInset 让目标合法。
+        NSLog(@"[InsetTrack] css_contentOffset: animated=YES target={%.1f, %.1f}", contentOffset.x, contentOffset.y);
+        UIEdgeInsets newContentInsets = [self maxEdgeInsetsWithContentOffset:contentOffset];
+        if (!UIEdgeInsetsEqualToEdgeInsets(self.contentInset, newContentInsets)) {
+            self.contentInset = newContentInsets;
+        }
     }
+    // ★ animated=NO 时不修改 contentInset。原因：
+    //
+    // 1. UIScrollView 的 setContentOffset:（非 animated）不做 clamp，
+    //    可以直接设置任何值（包括负值 offset），根本不需要临时扩大 contentInset。
+    //
+    // 2. 旧代码在此处无条件调用 maxEdgeInsetsWithContentOffset 扩大 contentInset，
+    //    但 maxEdgeInsetsWithContentOffset 只增不减（以 self.contentInset 为基准取 max），
+    //    导致在多 Scroller 联动同步场景中（Kotlin onScroll → follower.setContentOffset(负值, 0, false)），
+    //    每一帧都把 follower 的 contentInset 越扩越大，且永远无法自动恢复。
+    //    最终表现：UIKit 认为 -contentInset.left 是合法回弹边界，offset 停在非零位置。
+    //
+    // 3. 同样地，在用户猛往回弹方向拽（offset 持续为负）的极端场景中，
+    //    源 Scroller 的 onScroll 高频触发，follower 高频被 setContentOffset(负值, false)，
+    //    旧代码会持续扩大 contentInset，导致 inset 累积不归零。
+    //    现在不改 inset，就不存在"谁来恢复"的问题——根本没有被修改过。
     self.skipNestScrollLock = YES;
     [self setContentOffset:contentOffset animated:animated];
 }
@@ -465,6 +516,9 @@ KUIKLY_NESTEDSCROLL_PROTOCOL_PROPERTY_IMP
     NSArray<NSString *> *points = [params componentsSeparatedByString:@" "];
     BOOL animated = [points count] > 4 ? [points[4] boolValue] : NO;
     UIEdgeInsets contentInset = UIEdgeInsetsMake([points[0] doubleValue], [points[1] doubleValue], [points[2] doubleValue], [points[3] doubleValue]);
+    NSLog(@"[InsetTrack] css_contentInset: {%.1f, %.1f, %.1f, %.1f} animated=%d, 当前 offset={%.1f, %.1f}",
+          contentInset.top, contentInset.left, contentInset.bottom, contentInset.right, animated,
+          self.contentOffset.x, self.contentOffset.y);
     if (animated) {
         CGPoint maxContentOffset = [self p_maxContentOffsetInContentInset:contentInset];
         if (!CGPointEqualToPoint(self.contentOffset, maxContentOffset)) {
