@@ -83,6 +83,13 @@ import com.tencent.kuikly.core.views.TextInputState
 import kotlin.math.ceil
 
 /**
+ * CompositionLocal that provides the current IME composing (markedText) state.
+ * When true, the text field is in IME composition mode (e.g. pinyin input).
+ * Used by Material3 TextField to hide placeholder during IME composition.
+ */
+val LocalTextFieldHasMarkedText = androidx.compose.runtime.compositionLocalOf { false }
+
+/**
  * Base composable that enables users to edit text via hardware or software keyboard.
  *
  * This composable provides basic text editing functionality, however does not include any
@@ -205,6 +212,8 @@ internal fun CoreTextField(
     var lastSyncedTextInputState by remember { mutableStateOf<TextInputState?>(null) }
     // 标记是否正在处理原生事件，避免 set(value) 反向同步导致选择状态被重置
     var isProcessingNativeEvent by remember { mutableStateOf(false) }
+    // IME composing (markedText) 状态，用于通知 decorationBox 中的 placeholder
+    var hasMarkedText by remember { mutableStateOf(false) }
 
     val measurePolicy = remember(value) { object : MeasurePolicy {
         private val placementBlock: Placeable.PlacementScope.() -> Unit = {}
@@ -365,6 +374,9 @@ internal fun CoreTextField(
     val combinedModifier = others.then(focusModifier)
 
     Box(modifier = pointerModifier.then(combinedModifier), propagateMinConstraints = true) {
+        androidx.compose.runtime.CompositionLocalProvider(
+            LocalTextFieldHasMarkedText provides hasMarkedText
+        ) {
         decorationBox {
             ComposeNode<ComposeUiNode, KuiklyApplier>(
                 factory = {
@@ -508,6 +520,7 @@ internal fun CoreTextField(
                                 if (shouldIgnoreFallback) {
                                     return@textDidChange
                                 }
+                                hasMarkedText = it.hasMarkedText
                                 autoHeightTextAreaView.getViewAttr()
                                     .updatePropCache(TextConst.VALUE, it.text)
                                 onValueChange(TextFieldValue(it.text))
@@ -588,6 +601,7 @@ internal fun CoreTextField(
                     }
                 },
             )
+        }
         }
     }
 }

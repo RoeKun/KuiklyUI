@@ -394,7 +394,8 @@ class InputAttr : Attr() {
 data class InputParams(
     val text: String,
     val imeAction: String? = null,
-    val length: Int? = null
+    val length: Int? = null,
+    val hasMarkedText: Boolean = false
 )
 
 data class KeyboardParams(
@@ -419,7 +420,8 @@ class InputEvent : Event() {
             it as JSONObject
             val text = it.optString("text")
             val length = if (it.has("length")) it.optInt("length") else null
-            handler(InputParams(text, length = length))
+            val hasMarkedText = if (it.has("hasMarkedText")) it.optBoolean("hasMarkedText") else false
+            handler(InputParams(text, length = length, hasMarkedText = hasMarkedText))
         }, isSync = isSyncEdit)
     }
 
