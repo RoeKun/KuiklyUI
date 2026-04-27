@@ -103,6 +103,7 @@ typedef NS_ENUM(NSInteger, KRSelectableOption) {
 }
 
 - (void)kr_setTextSelectionHelper:(KRTextSelectionHelper *)helper {
+    [KRLogModule logInfo:[NSString stringWithFormat:@"[TextSelection] kr_setTextSelectionHelper view:%@ helper:%p", self, helper]];
     objc_setAssociatedObject(self, kTextSelectionHelperKey, helper, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
 
@@ -119,12 +120,12 @@ typedef NS_ENUM(NSInteger, KRSelectableOption) {
 #pragma mark - Public Methods
 
 - (BOOL)kr_handleTextSelectionMethod:(NSString *)method
-                              params:(NSString *)params
-                            callback:(KuiklyRenderCallback)callback {
+                              params:(NSString * _Nullable)params
+                            callback:(KuiklyRenderCallback _Nullable)callback {
     [KRLogModule logInfo:[NSString stringWithFormat:@"[TextSelection] handleMethod:%@", method]];
-    
+
     if ([method isEqualToString:KRTextSelectionMethodCreateSelection]) {
-        [self kr_handleCreateSelectionWithParams:params];
+        [self kr_handleCreateSelectionWithParams:params callback:callback];
         return YES;
     } else if ([method isEqualToString:KRTextSelectionMethodGetSelection]) {
         [self kr_handleGetSelectionWithCallback:callback];
@@ -164,11 +165,11 @@ typedef NS_ENUM(NSInteger, KRSelectableOption) {
         [KRLogModule logInfo:@"[TextSelection] createSelection failed - invalid params"];
         return;
     }
-    
+
     CGFloat x = [paramsDict[@"x"] floatValue];
     CGFloat y = [paramsDict[@"y"] floatValue];
     NSInteger type = [paramsDict[@"type"] integerValue];
-    
+
     // Create selection helper if needed
     KRTextSelectionHelper *helper = [self kr_textSelectionHelper];
     if (!helper) {
@@ -185,19 +186,19 @@ typedef NS_ENUM(NSInteger, KRSelectableOption) {
         [KRLogModule logInfo:@"[TextSelection] createSelection failed - no selectable labels found"];
         return;
     }
-    
+
     // Sort labels by position (y then x)
     [labels sortUsingComparator:^NSComparisonResult(KRLabel *obj1, KRLabel *obj2) {
         CGRect r1 = [obj1 convertRect:obj1.bounds toView:self];
         CGRect r2 = [obj2 convertRect:obj2.bounds toView:self];
-        
+
         if (ABS(r1.origin.y - r2.origin.y) > 5) { // Different lines
             return r1.origin.y < r2.origin.y ? NSOrderedAscending : NSOrderedDescending;
         } else { // Same line
             return r1.origin.x < r2.origin.x ? NSOrderedAscending : NSOrderedDescending;
         }
     }];
-    
+
     // Apply selection color if set
     [self kr_applySelectionColorToHelper:helper];
     
@@ -243,7 +244,7 @@ typedef NS_ENUM(NSInteger, KRSelectableOption) {
     // Find all selectable labels
     NSMutableArray<KRLabel *> *labels = [NSMutableArray array];
     [self kr_findAllKRLabelsInView:self toArray:labels];
-    
+
     if (labels.count == 0) return;
     
     // Apply selection color if set
@@ -251,12 +252,13 @@ typedef NS_ENUM(NSInteger, KRSelectableOption) {
     
     // Start selection with labels
     [helper startSelectionWithLabels:labels containerView:self];
-    
+
     // Select all
     [helper selectAll];
 }
 
 - (void)kr_findAllKRLabelsInView:(UIView *)view toArray:(NSMutableArray<KRLabel *> *)array {
+    NSInteger beforeCount = array.count;
     for (UIView *subview in view.subviews) {
         if ([subview isKindOfClass:[KRLabel class]]) {
             KRLabel *label = (KRLabel *)subview;
@@ -267,6 +269,9 @@ typedef NS_ENUM(NSInteger, KRSelectableOption) {
         }
         [self kr_findAllKRLabelsInView:subview toArray:array];
     }
+    if (array.count > beforeCount) {
+        [KRLogModule logInfo:[NSString stringWithFormat:@"[TextSelection] kr_findAllKRLabelsInView %@ found %ld labels (total:%lu)", view, (long)(array.count - beforeCount), (unsigned long)array.count]];
+    }
 }
 
 - (BOOL)kr_isLabelSelectable:(KRLabel *)label {
@@ -275,27 +280,28 @@ typedef NS_ENUM(NSInteger, KRSelectableOption) {
     // INHERIT (0) = continue checking parent
     // ENABLE (1) = allow selection
     // DISABLE (2) = deny selection
-    
+
     UIView *currentView = label;
     
     while (currentView != nil && currentView != self.superview) {
         NSNumber *selectableNum = objc_getAssociatedObject(currentView, kSelectableKey);
         if (selectableNum != nil) {
             KRSelectableOption selectable = (KRSelectableOption)[selectableNum integerValue];
-            
+
             // ENABLE: allow selection for this subtree
             if (selectable == KRSelectableOptionEnable) {
                 return YES;
             }
-            
+
             // DISABLE: deny selection for this subtree
             if (selectable == KRSelectableOptionDisable) {
+                [KRLogModule logInfo:[NSString stringWithFormat:@"[TextSelection] kr_isLabelSelectable NO - disabled at %@", currentView]];
                 return NO;
             }
-            
+
             // INHERIT: continue checking parent
         }
-        
+
         currentView = currentView.superview;
     }
     
@@ -305,8 +311,11 @@ typedef NS_ENUM(NSInteger, KRSelectableOption) {
     NSNumber *selfSelectableNum = objc_getAssociatedObject(self, kSelectableKey);
     if (selfSelectableNum != nil) {
         KRSelectableOption selfSelectable = (KRSelectableOption)[selfSelectableNum integerValue];
-        // Only deny if explicitly disabled
-        return selfSelectable != KRSelectableOptionDisable;
+        BOOL result = selfSelectable != KRSelectableOptionDisable;
+        if (!result) {
+            [KRLogModule logInfo:[NSString stringWithFormat:@"[TextSelection] kr_isLabelSelectable NO - container disabled"]];
+        }
+        return result;
     }
     
     // Default: allow selection when createSelection is called (implies intent to select)
@@ -326,7 +335,7 @@ typedef NS_ENUM(NSInteger, KRSelectableOption) {
         UIColor *backgroundColor = [KRConvertUtil UIColor:backgroundColorNum];
         [helper setSelectionColor:backgroundColor];
     }
-    
+
     // Parse cursor color
     NSNumber *cursorColorNum = colorConfig[@"cursor"];
     if (cursorColorNum) {
@@ -335,8 +344,31 @@ typedef NS_ENUM(NSInteger, KRSelectableOption) {
     }
 }
 
-#pragma mark - CSS Property Setters (for dynamic property handling)
+- (void)kr_setupTextSelectionIfNeeded {
+    KRTextSelectionHelper *helper = [self kr_textSelectionHelper];
+    if (!helper) {
+        helper = [[KRTextSelectionHelper alloc] init];
+        helper.delegate = [self kr_delegateHandler];
+        [self kr_setTextSelectionHelper:helper];
+        [KRLogModule logInfo:[NSString stringWithFormat:@"[TextSelection] kr_setupTextSelectionIfNeeded created new helper:%p", helper]];
+    } else {
+        [KRLogModule logInfo:[NSString stringWithFormat:@"[TextSelection] kr_setupTextSelectionIfNeeded reuse helper:%p", helper]];
+    }
 
+    NSMutableArray<KRLabel *> *labels = [NSMutableArray array];
+    [self kr_findAllKRLabelsInView:self toArray:labels];
+    if (labels.count == 0) {
+        [KRLogModule logInfo:@"[TextSelection] kr_setupTextSelectionIfNeeded no labels found"];
+        return;
+    }
+
+    [self kr_applySelectionColorToHelper:helper];
+
+    [helper startSelectionWithLabels:labels containerView:self];
+}
+
+
+#pragma mark - CSS Property Setters (for dynamic property handling)
 // These methods will be called when properties are set via hrv_setPropWithKey
 // The naming convention css_<propName> is required for KUIKLY_SET_CSS_COMMON_PROP macro
 
@@ -389,4 +421,3 @@ typedef NS_ENUM(NSInteger, KRSelectableOption) {
 }
 
 @end
-

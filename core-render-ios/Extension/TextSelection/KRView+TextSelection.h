@@ -28,6 +28,16 @@ extern NSString *const KRTextSelectionMethodClearSelection;
 @interface KRView (TextSelection)
 
 /**
+ * The text selection helper associated with this view (if any).
+ */
+@property (nonatomic, readonly, nullable) KRTextSelectionHelper *kr_textSelectionHelper;
+
+/**
+ * Set or clear the text selection helper associated with this view.
+ */
+- (void)kr_setTextSelectionHelper:(nullable KRTextSelectionHelper *)helper;
+
+/**
  * Handle text selection method call from DSL.
  * @param method The method name.
  * @param params The JSON string parameters.
@@ -44,7 +54,12 @@ extern NSString *const KRTextSelectionMethodClearSelection;
  */
 - (void)kr_cleanupTextSelection;
 
+/**
+ * Setup text selection helper if not already created.
+ * Called automatically when user starts selecting text via mouse.
+ */
+- (void)kr_setupTextSelectionIfNeeded;
+
 @end
 
 NS_ASSUME_NONNULL_END
-

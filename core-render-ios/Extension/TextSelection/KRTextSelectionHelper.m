@@ -19,6 +19,7 @@
 #import "KRTextMagnifierView.h"
 #import "KRScrollView.h"
 #import "KRLogModule.h"
+#import "KRView+TextSelection.h"
 
 #define KR_ANCHOR_TAG_LEFT 1001
 #define KR_ANCHOR_TAG_RIGHT 1002
@@ -33,8 +34,6 @@ static void *KRTextSelectionContainerFrameObserverContext = &KRTextSelectionCont
 
 /// The labels that participate in the selection, ordered visually.
 @property (nonatomic, strong) NSArray<KRLabel *> *labels;
-/// The view that contains all labels (and where anchors will be added).
-@property (nonatomic, weak) KRView *containerView;
 
 /// The left anchor view.
 @property (nonatomic, strong) KRTextSelectionAnchorView *leftAnchor;
@@ -63,6 +62,10 @@ static void *KRTextSelectionContainerFrameObserverContext = &KRTextSelectionCont
 /// Flag to track if containerView frame observer is added
 @property (nonatomic, assign) BOOL isObservingContainerFrame;
 
+#if TARGET_OS_OSX
+@property (nonatomic, strong) id localEventMonitor;
+#endif
+
 @end
 
 @implementation KRTextSelectionHelper
@@ -82,7 +85,8 @@ static void *KRTextSelectionContainerFrameObserverContext = &KRTextSelectionCont
         CGFloat anchorWidth = [KRTextSelectionAnchorView defaultAnchorWidth];
         CGFloat anchorHeight = [KRTextSelectionAnchorView defaultAnchorHeight];
         CGRect initialFrame = CGRectMake(0, 0, anchorWidth, anchorHeight);
-        
+        self.startIndex = -1;
+        self.endIndex = -1;
         _leftAnchor = [[KRTextSelectionAnchorView alloc] initWithFrame:initialFrame];
         [_leftAnchor setIsTop:YES];
 #if !TARGET_OS_OSX
@@ -94,7 +98,7 @@ static void *KRTextSelectionContainerFrameObserverContext = &KRTextSelectionCont
 #if !TARGET_OS_OSX
         _rightAnchor.tag = KR_ANCHOR_TAG_RIGHT;
 #endif
-        
+
         [self setupPanGestureForAnchor:_leftAnchor];
         [self setupPanGestureForAnchor:_rightAnchor];
     }
@@ -108,11 +112,10 @@ static void *KRTextSelectionContainerFrameObserverContext = &KRTextSelectionCont
 }
 
 - (void)startSelectionWithLabels:(NSArray<KRLabel *> *)labels containerView:(KRView *)containerView {
-    [self endSelection]; // Clear previous
-    
+    [self endSelection];
     self.labels = labels;
     self.containerView = containerView;
-    
+
     // Reset state
     self.startLabel = nil;
     self.endLabel = nil;
@@ -121,12 +124,16 @@ static void *KRTextSelectionContainerFrameObserverContext = &KRTextSelectionCont
     
     // Start observing scroll events to keep anchors in sync
     [self collectAndObserveScrollViews];
-    
+
     // Start observing containerView frame changes (e.g., screen rotation)
     [self observeContainerViewFrame];
-    
+
     [KRLogModule logInfo:[NSString stringWithFormat:@"[TextSelection] startSelection labels:%lu container:%@",
                           (unsigned long)labels.count, NSStringFromClass([containerView class])]];
+
+#if TARGET_OS_OSX
+    [self installMouseMonitor];
+#endif
 }
 
 - (void)selectWordAtPoint:(CGPoint)point {
@@ -182,8 +189,8 @@ static void *KRTextSelectionContainerFrameObserverContext = &KRTextSelectionCont
         }
         
         self.startLabel = touchedLabel;
-        self.endLabel = touchedLabel;
         self.startIndex = selectionRange.location;
+        self.endLabel = touchedLabel;
         self.endIndex = selectionRange.location + selectionRange.length;
         
         [self updateUI];
@@ -219,30 +226,43 @@ static void *KRTextSelectionContainerFrameObserverContext = &KRTextSelectionCont
 
 - (void)endSelection {
     // Check if there was an active selection before clearing
+    [KRLogModule logInfo:[NSString stringWithFormat:@"[TextSelection] endSelection begin helper:%p labels:%@ container:%@", self, self.labels ? @"exists" : @"nil", self.containerView ? @"exists" : @"nil"]];
+
+#if TARGET_OS_OSX
+    [self removeMouseMonitor];
+#endif
+
     BOOL hadSelection = (self.labels != nil && self.containerView != nil);
     if (hadSelection) {
         [KRLogModule logInfo:@"[TextSelection] endSelection"];
     }
-    
+
     // Remove scroll observers first
     [self removeScrollViewObservers];
-    
+
     // Remove containerView frame observer
     [self removeContainerViewFrameObserver];
-    
+
     [self.leftAnchor removeFromSuperview];
     [self.rightAnchor removeFromSuperview];
-    
+
     for (KRLabel *label in self.labels) {
         label.selectedRange = NSMakeRange(NSNotFound, 0);
     }
     
+    if (self.containerView) {
+        [self.containerView kr_setTextSelectionHelper:nil];
+    }
+
     self.labels = nil;
     self.containerView = nil;
     
     // Notify delegate about selection cancel
     if (hadSelection) {
         [self notifyDelegateDidCancelSelection];
+        [KRLogModule logInfo:@"[TextSelection] endSelection finished (had selection)"];
+    } else {
+        [KRLogModule logInfo:@"[TextSelection] endSelection finished (no active selection)"];
     }
 }
 
@@ -263,11 +283,15 @@ static const CGFloat kAnchorHitTestPadding = 20.0;
 #pragma mark - UI Update
 
 - (void)updateUI {
-    if (!self.startLabel || !self.endLabel || self.startIndex < 0 || self.endIndex < 0) return;
-    
+    if (!self.startLabel || !self.endLabel || self.startIndex < 0 || self.endIndex < 0) {
+        [KRLogModule logInfo:@"[TextSelection] updateUI early return - invalid state"];
+        return;
+    }
+
     // 1. Update Highlight
     BOOL selecting = NO;
-    
+    NSInteger assignedCount = 0;
+
     for (KRLabel *label in self.labels) {
         NSRange range = NSMakeRange(NSNotFound, 0);
         
@@ -284,9 +308,17 @@ static const CGFloat kAnchorHitTestPadding = 20.0;
             range = NSMakeRange(0, label.textRender.textStorage.length);
         }
         
+        if (range.location != NSNotFound && range.length > 0) {
+            assignedCount++;
+            [KRLogModule logInfo:[NSString stringWithFormat:@"[TextSelection] updateUI label:%@ range:(%ld,%ld)", label, (long)range.location, (long)range.length]];
+        }
         label.selectedRange = range;
     }
     
+    [KRLogModule logInfo:[NSString stringWithFormat:@"[TextSelection] updateUI totalLabels:%lu assigned:%ld start:(%@,%ld) end:(%@,%ld)",
+                          (unsigned long)self.labels.count, (long)assignedCount,
+                          self.startLabel, (long)self.startIndex,
+                          self.endLabel, (long)self.endIndex]];
     // 2. Update Anchors
     [self updateAnchor:self.leftAnchor forLabel:self.startLabel index:self.startIndex isStart:YES];
     [self updateAnchor:self.rightAnchor forLabel:self.endLabel index:self.endIndex isStart:NO];
@@ -294,24 +326,24 @@ static const CGFloat kAnchorHitTestPadding = 20.0;
 
 - (void)updateAnchor:(KRTextSelectionAnchorView *)anchor forLabel:(KRLabel *)label index:(NSInteger)index isStart:(BOOL)isStart {
     if (!label || !self.containerView) return;
-    
+
     if (anchor.superview != self.containerView) {
         [self.containerView addSubview:anchor];
     }
-    
+
     // Ensure style matches role
     if (anchor.isTop != isStart) {
         [anchor setIsTop:isStart];
     }
-    
+
     // 获取字符位置的 rect
     // isStart 为 YES 时，获取 index 位置字符的左边缘
     // isStart 为 NO 时，获取 index-1 位置字符的右边缘
     static const CGFloat kCursorRectWidth = 2.0;
-    
+
     CGRect rect;
     CGFloat lineHeight = 0;
-    
+
     if (isStart) {
         // 游标在 index 位置字符之前
         if (index >= label.textRender.textStorage.length && index > 0) {
@@ -341,16 +373,16 @@ static const CGFloat kAnchorHitTestPadding = 20.0;
             lineHeight = charRect.size.height;
         }
     }
-    
+
     // Convert rect to container view
     CGRect globalRect = [label convertRect:rect toView:self.containerView];
-    
+
     // 计算游标 frame
     CGFloat anchorWidth = [KRTextSelectionAnchorView defaultAnchorWidth];
     CGFloat capOffset = [KRTextSelectionAnchorView anchorCapOffset]; // 圆形头部超出文字的偏移量
-    
+
     [anchor setAnchorLineHeight:lineHeight];
-    
+
     if (isStart) {
         // 起始游标：圆形在顶部，竖线向下
         // 圆形 4/5 在文字上方，需要减去 capOffset
@@ -366,7 +398,7 @@ static const CGFloat kAnchorHitTestPadding = 20.0;
                                   anchorWidth,
                                   lineHeight + capOffset);
     }
-    
+
     [anchor setNeedsDisplay];
 }
 
@@ -375,46 +407,46 @@ static const CGFloat kAnchorHitTestPadding = 20.0;
 - (void)handlePan:(UIPanGestureRecognizer *)gesture {
     if (gesture.state == UIGestureRecognizerStateChanged) {
         CGPoint point = [gesture locationInView:self.containerView];
-        
+
         // Find closest label - 遍历所有 label，找到距离最近的
         KRLabel *closestLabel = nil;
         CGFloat minDistance = MAXFLOAT;
-        
+
         for (KRLabel *label in self.labels) {
             CGPoint localPoint = [self.containerView convertPoint:point toView:label];
-            
+
             // 计算点到 label bounds 的距离
             CGFloat dist = [self distanceFromPoint:localPoint toRect:label.bounds];
-            
+
             // 如果点在 bounds 内，距离为 0
             if (CGRectContainsPoint(label.bounds, localPoint)) {
                 dist = 0;
             }
-            
+
             if (dist < minDistance) {
                 minDistance = dist;
                 closestLabel = label;
-                
+
                 // 如果点正好在某个 label 内部，直接选择它
                 if (dist == 0) {
                     break;
                 }
             }
         }
-        
+
         if (closestLabel) {
             CGPoint localPoint = [self.containerView convertPoint:point toView:closestLabel];
             NSInteger idx = [self insertionIndexForPoint:localPoint inLabel:closestLabel];
-            
+
             // 无论选区是否变化，都更新放大镜位置
             [self showMagnifierViewWithTargetLabel:closestLabel point:point];
-            
+
             BOOL selectionChanged = NO;
-            
+
             if (gesture.view == self.leftAnchor) {
                 // Dragging Start
                 NSComparisonResult cmp = [self comparePositionLabel:closestLabel index:idx withLabel:self.endLabel index:self.endIndex];
-                
+
                 if (cmp == NSOrderedAscending) {
                     if (self.startLabel != closestLabel || self.startIndex != idx) {
                         self.startLabel = closestLabel;
@@ -425,10 +457,10 @@ static const CGFloat kAnchorHitTestPadding = 20.0;
                     // Swap: 拖动起始游标超过了结束游标
                     self.startLabel = self.endLabel;
                     self.startIndex = self.endIndex;
-                    
+
                     self.endLabel = closestLabel;
                     self.endIndex = idx;
-                    
+
                     KRTextSelectionAnchorView *temp = self.leftAnchor;
                     self.leftAnchor = self.rightAnchor;
                     self.rightAnchor = temp;
@@ -436,11 +468,11 @@ static const CGFloat kAnchorHitTestPadding = 20.0;
                 } else {
                     // same, ignore
                 }
-                
+
             } else {
                 // Dragging End
                 NSComparisonResult cmp = [self comparePositionLabel:closestLabel index:idx withLabel:self.startLabel index:self.startIndex];
-                
+
                 if (cmp == NSOrderedDescending) {
                     if (self.endLabel != closestLabel || self.endIndex != idx) {
                         self.endLabel = closestLabel;
@@ -451,10 +483,10 @@ static const CGFloat kAnchorHitTestPadding = 20.0;
                     // Swap: 拖动结束游标超过了起始游标
                     self.endLabel = self.startLabel;
                     self.endIndex = self.startIndex;
-                    
+
                     self.startLabel = closestLabel;
                     self.startIndex = idx;
-                    
+
                     KRTextSelectionAnchorView *temp = self.leftAnchor;
                     self.leftAnchor = self.rightAnchor;
                     self.rightAnchor = temp;
@@ -463,7 +495,7 @@ static const CGFloat kAnchorHitTestPadding = 20.0;
                     // same, ignore
                 }
             }
-            
+
             if (selectionChanged) {
                 [self updateUI];
                 // Notify delegate about selection change
@@ -471,12 +503,12 @@ static const CGFloat kAnchorHitTestPadding = 20.0;
             }
         }
     }
-    
+
     if (gesture.state == UIGestureRecognizerStateEnded || gesture.state == UIGestureRecognizerStateCancelled) {
         [self removeMagnifierView];
         // Notify delegate about selection end
         [self notifyDelegateDidEndSelection];
-        
+
         [KRLogModule logInfo:[NSString stringWithFormat:@"[TextSelection] panGesture ended startIdx:%ld endIdx:%ld",
                               (long)self.startIndex, (long)self.endIndex]];
     }
@@ -520,10 +552,10 @@ static const CGFloat kMagnifierVerticalOffset = 60.0;
 - (CGFloat)distanceFromPoint:(CGPoint)p toRect:(CGRect)rect {
     CGFloat dx = MAX(CGRectGetMinX(rect) - p.x, 0);
     if (p.x > CGRectGetMaxX(rect)) dx = p.x - CGRectGetMaxX(rect);
-    
+
     CGFloat dy = MAX(CGRectGetMinY(rect) - p.y, 0);
     if (p.y > CGRectGetMaxY(rect)) dy = p.y - CGRectGetMaxY(rect);
-    
+
     return sqrt(dx*dx + dy*dy);
 }
 
@@ -533,15 +565,15 @@ static const CGFloat kMagnifierVerticalOffset = 60.0;
     if (!CGSizeEqualToSize(label.textRender.size, label.bounds.size)) {
         label.textRender.size = label.bounds.size;
     }
-    
+
     NSLayoutManager *lm = label.textRender.layoutManager;
     NSTextContainer *tc = label.textRender.textContainer;
     NSUInteger textLength = label.textRender.textStorage.length;
-    
+
     if (textLength == 0) {
         return 0;
     }
-    
+
     // 只限制 x 坐标在 label 宽度范围内，y 坐标不限制
     // 让 characterIndexForPoint: 自己决定返回哪个字符
     CGPoint adjustedPoint = point;
@@ -550,15 +582,15 @@ static const CGFloat kMagnifierVerticalOffset = 60.0;
     } else if (adjustedPoint.x > label.bounds.size.width) {
         adjustedPoint.x = label.bounds.size.width;
     }
-    
+
     CGFloat fraction = 0;
     NSUInteger index = [lm characterIndexForPoint:adjustedPoint inTextContainer:tc fractionOfDistanceBetweenInsertionPoints:&fraction];
-    
+
     // 边界检查
     if (index >= textLength) {
         return textLength;
     }
-    
+
     // 根据 fraction 决定插入点在字符前还是后
     if (fraction > 0.5) {
         return MIN(index + 1, textLength);
@@ -572,10 +604,10 @@ static const CGFloat kMagnifierVerticalOffset = 60.0;
         if (idx1 > idx2) return NSOrderedDescending;
         return NSOrderedSame;
     }
-    
+
     NSInteger i1 = [self.labels indexOfObject:l1];
     NSInteger i2 = [self.labels indexOfObject:l2];
-    
+
     if (i1 < i2) return NSOrderedAscending;
     if (i1 > i2) return NSOrderedDescending;
     return NSOrderedSame;
@@ -585,10 +617,10 @@ static const CGFloat kMagnifierVerticalOffset = 60.0;
 
 - (NSRange)rangeOfWordAtIndex:(NSInteger)index inString:(NSString *)string {
     if (index < 0 || index >= string.length) return NSMakeRange(0, 0);
-    
+
     // Simple whitespace based
     __block NSRange result = NSMakeRange(index, 1);
-    
+
     [string enumerateSubstringsInRange:NSMakeRange(0, string.length)
                                options:NSStringEnumerationByWords
                             usingBlock:^(NSString * _Nullable substring,
@@ -600,58 +632,58 @@ static const CGFloat kMagnifierVerticalOffset = 60.0;
             *stop = YES;
         }
     }];
-    
+
     return result;
 }
 
 - (NSRange)rangeOfParagraphAtIndex:(NSInteger)index inString:(NSString *)string {
     if (index < 0 || index >= string.length) return NSMakeRange(0, string.length);
-    
+
     // Find paragraph boundaries (line breaks)
     __block NSRange result = NSMakeRange(0, string.length);
-    
+
     [string enumerateSubstringsInRange:NSMakeRange(0, string.length)
                                options:NSStringEnumerationByParagraphs
                             usingBlock:^(NSString * _Nullable substring,
                                          NSRange substringRange,
                                          NSRange enclosingRange,
                                          BOOL * _Nonnull stop) {
-        if (NSLocationInRange(index, substringRange) || 
+        if (NSLocationInRange(index, substringRange) ||
             (index == substringRange.location + substringRange.length && index == string.length)) {
             result = substringRange;
             *stop = YES;
         }
     }];
-    
+
     return result;
 }
 
 - (NSRange)rangeOfSentenceAtIndex:(NSInteger)index inString:(NSString *)string {
     if (index < 0 || index >= string.length) return NSMakeRange(0, string.length);
-    
+
     // Find sentence boundaries using NSStringEnumerationBySentences
     __block NSRange result = NSMakeRange(0, string.length);
     __block BOOL found = NO;
-    
+
     [string enumerateSubstringsInRange:NSMakeRange(0, string.length)
                                options:NSStringEnumerationBySentences
                             usingBlock:^(NSString * _Nullable substring,
                                          NSRange substringRange,
                                          NSRange enclosingRange,
                                          BOOL * _Nonnull stop) {
-        if (NSLocationInRange(index, substringRange) || 
+        if (NSLocationInRange(index, substringRange) ||
             (index == substringRange.location + substringRange.length && index == string.length)) {
             result = substringRange;
             found = YES;
             *stop = YES;
         }
     }];
-    
+
     // If no sentence boundary found (e.g., text without punctuation), return entire string
     if (!found) {
         result = NSMakeRange(0, string.length);
     }
-    
+
     return result;
 }
 
@@ -707,7 +739,7 @@ static const CGFloat kMagnifierVerticalOffset = 60.0;
     }
     
     NSMutableArray<NSString *> *preContent = [NSMutableArray array];
-    
+
     // Find index of startLabel
     NSInteger startLabelIndex = [self.labels indexOfObject:self.startLabel];
     if (startLabelIndex == NSNotFound) {
@@ -740,7 +772,7 @@ static const CGFloat kMagnifierVerticalOffset = 60.0;
     }
     
     NSMutableArray<NSString *> *postContent = [NSMutableArray array];
-    
+
     // Find index of endLabel
     NSInteger endLabelIndex = [self.labels indexOfObject:self.endLabel];
     if (endLabelIndex == NSNotFound) {
@@ -860,21 +892,21 @@ static const CGFloat kMagnifierVerticalOffset = 60.0;
 /// Collect all UIScrollView ancestors of the labels and start observing their scroll events
 - (void)collectAndObserveScrollViews {
     if (!self.labels || self.labels.count == 0) return;
-    
+
     [self removeScrollViewObservers]; // Clear previous observers
     self.observedScrollViews = [NSHashTable weakObjectsHashTable];
-    
+
     // Traverse view hierarchy for each label and collect all UIScrollView ancestors
     for (KRLabel *label in self.labels) {
         UIView *view = label.superview;
         while (view) {
             if ([view isKindOfClass:[UIScrollView class]]) {
                 UIScrollView *scrollView = (UIScrollView *)view;
-                
+
                 // Avoid duplicate observation
                 if (![self.observedScrollViews containsObject:scrollView]) {
                     [self.observedScrollViews addObject:scrollView];
-                    
+
                     // Use KRScrollView's delegate mechanism if available, otherwise use KVO
                     if ([scrollView isKindOfClass:[KRScrollView class]]) {
                         [(KRScrollView *)scrollView addScrollViewDelegate:self];
@@ -940,7 +972,7 @@ static const CGFloat kMagnifierVerticalOffset = 60.0;
 - (void)observeContainerViewFrame {
     if (!self.containerView) return;
     if (self.isObservingContainerFrame) return; // Already observing
-    
+
     [self.containerView addObserver:self
                          forKeyPath:@"layer.bounds"
                             options:NSKeyValueObservingOptionNew
@@ -960,6 +992,161 @@ static const CGFloat kMagnifierVerticalOffset = 60.0;
     }
     self.isObservingContainerFrame = NO;
 }
+
+#pragma mark - macOS Mouse Events
+
+- (void)mouseDown:(NSEvent *)event inLabel:(KRLabel *)label localPoint:(NSPoint)localPoint {
+    if (!self.labels || ![self.labels containsObject:label]) {
+        [KRLogModule logInfo:[NSString stringWithFormat:@"[TextSelection] mouseDown rejected - labels:%@ contains:%d", self.labels ? @"exists" : @"nil", (int)[self.labels containsObject:label]]];
+        return;
+    }
+
+    NSInteger idx = [self insertionIndexForPoint:localPoint inLabel:label];
+
+    if (event.clickCount == 2) {
+        NSString *text = label.textRender.textStorage.string;
+        NSRange wordRange = [self rangeOfWordAtIndex:idx inString:text];
+        self.startLabel = label;
+        self.startIndex = wordRange.location;
+        self.endLabel = label;
+        self.endIndex = wordRange.location + wordRange.length;
+        [KRLogModule logInfo:[NSString stringWithFormat:@"[TextSelection] mouseDown doubleClick label:%@ idx:%ld wordRange:(%ld,%ld)", label, (long)idx, (long)wordRange.location, (long)wordRange.length]];
+    } else if (event.clickCount >= 3) {
+        self.startLabel = label;
+        self.startIndex = 0;
+        self.endLabel = label;
+        self.endIndex = label.textRender.textStorage.length;
+        [KRLogModule logInfo:[NSString stringWithFormat:@"[TextSelection] mouseDown tripleClick label:%@ idx:%ld fullLength:%ld", label, (long)idx, (long)self.endIndex]];
+    } else {
+        self.startLabel = label;
+        self.startIndex = idx;
+        self.endLabel = label;
+        self.endIndex = idx;
+        [KRLogModule logInfo:[NSString stringWithFormat:@"[TextSelection] mouseDown singleClick label:%@ idx:%ld", label, (long)idx]];
+    }
+
+    [self updateUI];
+    [self notifyDelegateDidStartSelection];
+}
+
+
+- (void)mouseDraggedToPoint:(NSPoint)containerPoint {
+    if (!self.labels || !self.containerView) {
+        [KRLogModule logInfo:@"[TextSelection] mouseDragged rejected - no labels or container"];
+        return;
+    }
+
+    KRLabel *closest = nil;
+    CGFloat minDistance = MAXFLOAT;
+
+    for (KRLabel *label in self.labels) {
+        CGPoint localPoint = [self.containerView convertPoint:containerPoint toView:label];
+        CGFloat dist = [self distanceFromPoint:localPoint toRect:label.bounds];
+        if (CGRectContainsPoint(label.bounds, localPoint)) {
+            dist = 0;
+        }
+        if (dist < minDistance) {
+            minDistance = dist;
+            closest = label;
+            if (dist == 0) break;
+        }
+    }
+
+    if (!closest) {
+        [KRLogModule logInfo:@"[TextSelection] mouseDragged no closest label found"];
+        return;
+    }
+
+    CGPoint local = [self.containerView convertPoint:containerPoint toView:closest];
+    NSInteger idx = [self insertionIndexForPoint:local inLabel:closest];
+
+    NSComparisonResult cmp = [self comparePositionLabel:closest index:idx
+                                              withLabel:self.startLabel index:self.startIndex];
+    if (cmp == NSOrderedDescending || cmp == NSOrderedSame) {
+        self.endLabel = closest;
+        self.endIndex = idx;
+    } else {
+        self.endLabel = self.startLabel;
+        self.endIndex = self.startIndex;
+        self.startLabel = closest;
+        self.startIndex = idx;
+    }
+
+    [KRLogModule logInfo:[NSString stringWithFormat:@"[TextSelection] mouseDragged closest:%@ idx:%ld start:(%@,%ld) end:(%@,%ld)",
+                                                    closest, (long)idx, self.startLabel, (long)self.startIndex, self.endLabel, (long)self.endIndex]];
+
+    [self updateUI];
+    [self notifyDelegateDidChangeSelection];
+}
+
+- (void)mouseUp {
+    [KRLogModule logInfo:@"[TextSelection] mouseUp"];
+    [self notifyDelegateDidEndSelection];
+}
+
+#pragma mark - macOS Global Mouse Monitor
+
+#if TARGET_OS_OSX
+
+- (void)installMouseMonitor {
+    [self removeMouseMonitor];
+    __weak typeof(self) weakSelf = self;
+    self.localEventMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskLeftMouseDown handler:^NSEvent *(NSEvent *event) {
+        [weakSelf handleGlobalMouseDown:event];
+        return event;
+    }];
+    [KRLogModule logInfo:[NSString stringWithFormat:@"[TextSelection] installMouseMonitor helper:%p", self]];
+}
+
+- (void)removeMouseMonitor {
+    if (self.localEventMonitor) {
+        [NSEvent removeMonitor:self.localEventMonitor];
+        self.localEventMonitor = nil;
+        [KRLogModule logInfo:[NSString stringWithFormat:@"[TextSelection] removeMouseMonitor helper:%p", self]];
+    }
+}
+
+- (void)handleGlobalMouseDown:(NSEvent *)event {
+    if (!self.labels || self.labels.count == 0) {
+        [KRLogModule logInfo:@"[TextSelection] handleGlobalMouseDown early return - no labels"];
+        return;
+    }
+
+    NSWindow *window = event.window;
+    if (!window) {
+        [KRLogModule logInfo:@"[TextSelection] handleGlobalMouseDown early return - no window"];
+        return;
+    }
+
+    NSPoint windowPoint = event.locationInWindow;
+    NSView *hitView = [window.contentView hitTest:windowPoint];
+
+    [KRLogModule logInfo:[NSString stringWithFormat:@"[TextSelection] handleGlobalMouseDown hitView:%@ windowPoint:(%.1f,%.1f)", hitView, windowPoint.x, windowPoint.y]];
+
+    // Check if hit view is one of the selected labels or inside one
+    BOOL hitSelectedLabel = NO;
+    NSView *current = hitView;
+    while (current) {
+        if ([current isKindOfClass:[KRLabel class]]) {
+            for (KRLabel *label in self.labels) {
+                if (label == current && label.selectedRange.length > 0) {
+                    hitSelectedLabel = YES;
+                    [KRLogModule logInfo:[NSString stringWithFormat:@"[TextSelection] handleGlobalMouseDown hit selected label:%@ range:(%ld,%ld)", label, (long)label.selectedRange.location, (long)label.selectedRange.length]];
+                    break;
+                }
+            }
+        }
+        if (hitSelectedLabel) break;
+        current = current.superview;
+    }
+
+    if (!hitSelectedLabel) {
+        [KRLogModule logInfo:@"[TextSelection] handleGlobalMouseDown miss selected labels -> endSelection"];
+        [self endSelection];
+    }
+}
+
+#endif
 
 @end
 

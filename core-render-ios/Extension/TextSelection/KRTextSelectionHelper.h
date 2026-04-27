@@ -16,6 +16,7 @@
 #import <Foundation/Foundation.h>
 #import "KRUIKit.h" // [macOS]
 #import "KRLabel.h"
+#import "KRView.h"
 #import "KRView+TextSelection.h"
 
 NS_ASSUME_NONNULL_BEGIN
@@ -67,6 +68,9 @@ typedef NS_ENUM(NSInteger, KRTextSelectionType) {
 
 /// The delegate for selection events.
 @property (nonatomic, weak, nullable) id<KRTextSelectionHelperDelegate> delegate;
+
+/// Text Selection Container
+@property (nonatomic, weak, nullable) KRView *containerView;
 
 /// Create a new instance (for per-container use).
 - (instancetype)init;
@@ -152,7 +156,11 @@ typedef NS_ENUM(NSInteger, KRTextSelectionType) {
  */
 - (void)setCursorColor:(UIColor * _Nullable)color;
 
+#pragma mark - macOS Mouse Events for text select
+- (void)mouseDown:(NSEvent *)event inLabel:(KRLabel *)label localPoint:(NSPoint)localPoint;
+- (void)mouseDraggedToPoint:(NSPoint)containerPoint;
+- (void)mouseUp;
+
 @end
 
 NS_ASSUME_NONNULL_END
-
