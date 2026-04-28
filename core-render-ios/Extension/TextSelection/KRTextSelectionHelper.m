@@ -62,6 +62,10 @@ static void *KRTextSelectionContainerFrameObserverContext = &KRTextSelectionCont
 /// Flag to track if containerView frame observer is added
 @property (nonatomic, assign) BOOL isObservingContainerFrame;
 
+// 原始锚点：用户 mouseDown 的位置，drag 期间不变
+@property (nonatomic, weak) KRLabel *anchorLabel;
+@property (nonatomic, assign) NSInteger anchorIndex;
+
 #if TARGET_OS_OSX
 @property (nonatomic, strong) id localEventMonitor;
 #endif
@@ -80,8 +84,7 @@ static void *KRTextSelectionContainerFrameObserverContext = &KRTextSelectionCont
 }
 
 - (instancetype)init {
-    self = [super init];
-    if (self) {
+    if (self = [super init]) {
         CGFloat anchorWidth = [KRTextSelectionAnchorView defaultAnchorWidth];
         CGFloat anchorHeight = [KRTextSelectionAnchorView defaultAnchorHeight];
         CGRect initialFrame = CGRectMake(0, 0, anchorWidth, anchorHeight);
@@ -102,6 +105,7 @@ static void *KRTextSelectionContainerFrameObserverContext = &KRTextSelectionCont
         [self setupPanGestureForAnchor:_leftAnchor];
         [self setupPanGestureForAnchor:_rightAnchor];
     }
+    [KRLogModule logInfo:[NSString stringWithFormat:@"[TextSelection] Helper init %p", self]];
     return self;
 }
 
@@ -858,6 +862,132 @@ static const CGFloat kMagnifierVerticalOffset = 60.0;
     [self.rightAnchor setColor:color];
 }
 
+#pragma mark - Helpers
+
+- (NSInteger)insertionIndexForPoint:(CGPoint)point inLabel:(KRLabel *)label {
+    if (!CGSizeEqualToSize(label.textRender.size, label.bounds.size)) {
+        label.textRender.size = label.bounds.size;
+    }
+
+    NSLayoutManager *lm = label.textRender.layoutManager;
+    NSTextContainer *tc = label.textRender.textContainer;
+    NSUInteger textLength = label.textRender.textStorage.length;
+
+    if (textLength == 0) {
+        return 0;
+    }
+
+    CGPoint adjustedPoint = point;
+    if (adjustedPoint.x < 0) {
+        adjustedPoint.x = 0;
+    } else if (adjustedPoint.x > label.bounds.size.width) {
+        adjustedPoint.x = label.bounds.size.width;
+    }
+
+    CGFloat fraction = 0;
+    NSUInteger index = [lm characterIndexForPoint:adjustedPoint inTextContainer:tc fractionOfDistanceBetweenInsertionPoints:&fraction];
+
+    if (index >= textLength) {
+        return textLength;
+    }
+
+    if (fraction > 0.5) {
+        return MIN(index + 1, textLength);
+    }
+    return index;
+}
+
+- (NSComparisonResult)comparePositionLabel:(KRLabel *)l1 index:(NSInteger)idx1 withLabel:(KRLabel *)l2 index:(NSInteger)idx2 {
+    if (l1 == l2) {
+        if (idx1 < idx2) return NSOrderedAscending;
+        if (idx1 > idx2) return NSOrderedDescending;
+        return NSOrderedSame;
+    }
+
+    NSInteger i1 = [self.labels indexOfObject:l1];
+    NSInteger i2 = [self.labels indexOfObject:l2];
+
+    if (i1 < i2) return NSOrderedAscending;
+    if (i1 > i2) return NSOrderedDescending;
+    return NSOrderedSame;
+}
+
+- (NSRange)rangeOfWordAtIndex:(NSInteger)index inString:(NSString *)string {
+    if (index < 0 || index >= string.length) return NSMakeRange(0, 0);
+
+    __block NSRange result = NSMakeRange(index, 1);
+    [string enumerateSubstringsInRange:NSMakeRange(0, string.length)
+                               options:NSStringEnumerationByWords
+                            usingBlock:^(NSString * _Nullable substring,
+                                         NSRange substringRange,
+                                         NSRange enclosingRange,
+                                         BOOL * _Nonnull stop) {
+        if (NSLocationInRange(index, substringRange)) {
+            result = substringRange;
+            *stop = YES;
+        }
+    }];
+
+    return result;
+}
+
+- (NSRange)rangeOfParagraphAtIndex:(NSInteger)index inString:(NSString *)string {
+    if (index < 0 || index >= string.length) return NSMakeRange(0, string.length);
+
+    __block NSRange result = NSMakeRange(0, string.length);
+    [string enumerateSubstringsInRange:NSMakeRange(0, string.length)
+                               options:NSStringEnumerationByParagraphs
+                            usingBlock:^(NSString * _Nullable substring,
+                                         NSRange substringRange,
+                                         NSRange enclosingRange,
+                                         BOOL * _Nonnull stop) {
+        if (NSLocationInRange(index, substringRange) ||
+            (index == substringRange.location + substringRange.length && index == string.length)) {
+            result = substringRange;
+            *stop = YES;
+        }
+    }];
+
+    return result;
+}
+
+- (NSRange)rangeOfSentenceAtIndex:(NSInteger)index inString:(NSString *)string {
+    if (index < 0 || index >= string.length) return NSMakeRange(0, string.length);
+
+    __block NSRange result = NSMakeRange(0, string.length);
+    __block BOOL found = NO;
+
+    [string enumerateSubstringsInRange:NSMakeRange(0, string.length)
+                               options:NSStringEnumerationBySentences
+                            usingBlock:^(NSString * _Nullable substring,
+                                         NSRange substringRange,
+                                         NSRange enclosingRange,
+                                         BOOL * _Nonnull stop) {
+        if (NSLocationInRange(index, substringRange) ||
+            (index == substringRange.location + substringRange.length && index == string.length)) {
+            result = substringRange;
+            found = YES;
+            *stop = YES;
+        }
+    }];
+
+    if (!found) {
+        result = NSMakeRange(0, string.length);
+    }
+
+    return result;
+}
+
+- (CGFloat)distanceFromPoint:(CGPoint)p toRect:(CGRect)rect {
+    CGFloat dx = MAX(CGRectGetMinX(rect) - p.x, 0);
+    if (p.x > CGRectGetMaxX(rect)) dx = p.x - CGRectGetMaxX(rect);
+
+    CGFloat dy = MAX(CGRectGetMinY(rect) - p.y, 0);
+    if (p.y > CGRectGetMaxY(rect)) dy = p.y - CGRectGetMaxY(rect);
+
+    return sqrt(dx*dx + dy*dy);
+}
+
 #pragma mark - Delegate Notifications
 
 - (void)notifyDelegateDidStartSelection {
@@ -926,7 +1056,7 @@ static const CGFloat kMagnifierVerticalOffset = 60.0;
 /// Remove all scroll observers
 - (void)removeScrollViewObservers {
     if (!self.observedScrollViews) return;
-    
+
     for (UIScrollView *scrollView in self.observedScrollViews) {
         if ([scrollView isKindOfClass:[KRScrollView class]]) {
             [(KRScrollView *)scrollView removeScrollViewDelegate:self];
@@ -938,7 +1068,7 @@ static const CGFloat kMagnifierVerticalOffset = 60.0;
             }
         }
     }
-    
+
     self.observedScrollViews = nil;
 }
 
@@ -1025,6 +1155,10 @@ static const CGFloat kMagnifierVerticalOffset = 60.0;
         [KRLogModule logInfo:[NSString stringWithFormat:@"[TextSelection] mouseDown singleClick label:%@ idx:%ld", label, (long)idx]];
     }
 
+    // 保存原始锚点
+    self.anchorLabel = self.startLabel;
+    self.anchorIndex = self.startIndex;
+
     [self updateUI];
     [self notifyDelegateDidStartSelection];
 }
@@ -1060,6 +1194,7 @@ static const CGFloat kMagnifierVerticalOffset = 60.0;
     CGPoint local = [self.containerView convertPoint:containerPoint toView:closest];
     NSInteger idx = [self insertionIndexForPoint:local inLabel:closest];
 
+    // 始终和原始锚点比较，而非和当前 start 比较
     NSComparisonResult cmp = [self comparePositionLabel:closest index:idx
                                               withLabel:self.startLabel index:self.startIndex];
     if (cmp == NSOrderedDescending || cmp == NSOrderedSame) {
@@ -1147,4 +1282,3 @@ static const CGFloat kMagnifierVerticalOffset = 60.0;
 #endif
 
 @end
-
