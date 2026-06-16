@@ -161,6 +161,9 @@ static const UIAccessibilityTraits UIAccessibilityTraitHeader = (1 << 15);
 #define UITextView KRUITextView
 #define UIWindow NSWindow
 
+// Pasteboard alias
+#define UIPasteboard NSPasteboard
+
 // Application aliases
 #define UIApplication NSApplication
 
@@ -490,6 +493,8 @@ NS_INLINE NSEdgeInsets UIEdgeInsetsMake(CGFloat top, CGFloat left, CGFloat botto
 
 @interface KRUITextView : NSTextView <NSTextViewDelegate>
 
+- (BOOL)isFirstResponder;
+
 @property (nonatomic, copy, nullable) NSString *text;
 @property (nonatomic, copy, nullable) NSAttributedString *attributedText;
 @property (nonatomic, assign) NSTextAlignment textAlignment;
@@ -506,6 +511,9 @@ NS_INLINE NSEdgeInsets UIEdgeInsetsMake(CGFloat top, CGFloat left, CGFloat botto
 - (UITextPosition *)positionFromPosition:(UITextPosition *)position offset:(NSInteger)offset;
 - (UITextRange *)textRangeFromPosition:(UITextPosition *)fromPosition toPosition:(UITextPosition *)toPosition;
 - (NSInteger)offsetFromPosition:(UITextPosition *)from toPosition:(UITextPosition *)to;
+
+- (BOOL)isFirstResponder;
+- (BOOL)becomeFirstResponder;
 
 @end
 
@@ -924,6 +932,14 @@ typedef void (^KRUIGraphicsImageDrawingActions)(KRUIGraphicsImageRendererContext
 - (instancetype)initWithSize:(CGSize)size;
 - (instancetype)initWithSize:(CGSize)size format:(KRUIGraphicsImageRendererFormat *)format;
 - (NSImage *)imageWithActions:(NS_NOESCAPE KRUIGraphicsImageDrawingActions)actions;
+
+@end
+
+#pragma mark - NSPasteboard UIKit Compatibility
+
+@interface NSPasteboard (KRUIPasteboardCompat)
+
+@property (nonatomic, copy, nullable) NSString *string;
 
 @end
 

@@ -197,7 +197,7 @@ typedef NS_ENUM(NSInteger, KRSelectableOption) {
 }
 
 - (void)kr_findAllKRLabelsInView:(UIView *)view toArray:(NSMutableArray<KRLabel *> *)array {
-    NSInteger beforeCount = array.count;
+//    NSInteger beforeCount = array.count;
     for (UIView *subview in view.subviews) {
         if ([subview isKindOfClass:[KRLabel class]]) {
             KRLabel *label = (KRLabel *)subview;
