@@ -14,6 +14,7 @@
  */
 
 #import "KRView+TextSelection.h"
+#import "KRTextSelectionHelper.h"
 #import "KRLabel.h"
 #import "NSObject+KR.h"
 #import "KRConvertUtil.h"
@@ -125,7 +126,7 @@ typedef NS_ENUM(NSInteger, KRSelectableOption) {
     [KRLogModule logInfo:[NSString stringWithFormat:@"[TextSelection] handleMethod:%@", method]];
 
     if ([method isEqualToString:KRTextSelectionMethodCreateSelection]) {
-        [self kr_handleCreateSelectionWithParams:params callback:callback];
+        [self kr_handleCreateSelectionWithParams:params];
         return YES;
     } else if ([method isEqualToString:KRTextSelectionMethodGetSelection]) {
         [self kr_handleGetSelectionWithCallback:callback];

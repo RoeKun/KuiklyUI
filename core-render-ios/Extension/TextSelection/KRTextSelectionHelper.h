@@ -157,9 +157,12 @@ typedef NS_ENUM(NSInteger, KRTextSelectionType) {
 - (void)setCursorColor:(UIColor * _Nullable)color;
 
 #pragma mark - macOS Mouse Events for text select
+
+#if TARGET_OS_OSX
 - (void)mouseDown:(NSEvent *)event inLabel:(KRLabel *)label localPoint:(NSPoint)localPoint;
 - (void)mouseDraggedToPoint:(NSPoint)containerPoint;
 - (void)mouseUp;
+#endif
 
 @end
 

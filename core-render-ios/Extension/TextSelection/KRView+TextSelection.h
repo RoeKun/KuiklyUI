@@ -14,9 +14,11 @@
  */
 
 #import "KRView.h"
-#import "KRTextSelectionHelper.h"
+
+@class KRTextSelectionHelper;
 
 NS_ASSUME_NONNULL_BEGIN
+
 
 /// Text selection method names
 extern NSString *const KRTextSelectionMethodCreateSelection;

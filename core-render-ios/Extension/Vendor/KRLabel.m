@@ -91,36 +91,33 @@ NSString *const KRBGAttributeKey = @"KRBGAttributeKey";
             self.selectionColor = [[UIColor colorWithRed:0x00/255.0 green:0x99/255.0 blue:0xff/255.0 alpha:1.0] colorWithAlphaComponent:0.3];
         }
         [self.selectionColor setFill];
-
+        
         NSRange glyphRange = [self.textRender.layoutManager glyphRangeForCharacterRange:self.selectedRange actualCharacterRange:nil];
         [self.textRender.layoutManager enumerateEnclosingRectsForGlyphRange:glyphRange
                                                    withinSelectedGlyphRange:glyphRange
                                                             inTextContainer:self.textRender.textContainer
                                                                  usingBlock:^(CGRect r, BOOL * _Nonnull stop) {
 #if TARGET_OS_OSX
-//             CGContextRef context = UIGraphicsGetCurrentContext();
-//             if (context) {
-//                 CGContextFillRect(context, drawRect);
-//             }
-NSRect highlightRect = NSMakeRect(enclosingRect.origin.x + rect.origin.x,
-                                          enclosingRect.origin.y + rect.origin.y,
-                                          enclosingRect.size.width,
-                                          enclosingRect.size.height);
+            /// wcccg
+            //             CGContextRef context = UIGraphicsGetCurrentContext();
+            //             if (context) {
+            //                 CGContextFillRect(context, drawRect);
+            //             }
+            /// valo
+            NSRect highlightRect = NSMakeRect(r.origin.x + rect.origin.x,
+                                              r.origin.y + rect.origin.y,
+                                              r.size.width,
+                                              r.size.height);
             NSRectFill(highlightRect);
-
+            
 #else
-             CGRect drawRect = CGRectOffset(r, rect.origin.x, rect.origin.y);
-             UIRectFill(drawRect);
+            CGRect drawRect = CGRectOffset(r, rect.origin.x, rect.origin.y);
+            UIRectFill(drawRect);
 #endif
         }];
     }
 
-#if TARGET_OS_OSX // [macOS: draw selection highlight before text 存疑
-    [self kr_drawSelectionHighlightInRect:rect];
-#endif // macOS]
-    
     [self.textRender drawTextAtPoint:rect.origin isCanceled:nil];
-
 }
 
 - (void)setBackgroundColor:(UIColor *)backgroundColor {

@@ -994,7 +994,7 @@ static const CGFloat kMagnifierVerticalOffset = 60.0;
 }
 
 #pragma mark - macOS Mouse Events
-
+#if TARGET_OS_OSX
 - (void)mouseDown:(NSEvent *)event inLabel:(KRLabel *)label localPoint:(NSPoint)localPoint {
     if (!self.labels || ![self.labels containsObject:label]) {
         [KRLogModule logInfo:[NSString stringWithFormat:@"[TextSelection] mouseDown rejected - labels:%@ contains:%d", self.labels ? @"exists" : @"nil", (int)[self.labels containsObject:label]]];
@@ -1085,8 +1085,6 @@ static const CGFloat kMagnifierVerticalOffset = 60.0;
 }
 
 #pragma mark - macOS Global Mouse Monitor
-
-#if TARGET_OS_OSX
 
 - (void)installMouseMonitor {
     [self removeMouseMonitor];
