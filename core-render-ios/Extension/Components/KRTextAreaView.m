@@ -19,6 +19,7 @@
 #import "KRRichTextView.h"
 #import "KuiklyRenderBridge.h"
 #import "NSObject+KR.h"
+#import "KRLogModule.h"
 
 // 字典key常量
 NSString *const KRFontSizeKey = @"fontSize";
@@ -436,6 +437,18 @@ NSString *const KRFontWeightKey = @"fontWeight";
     if (![self isFirstResponder] && rawText.length > 0) {
         [self becomeFirstResponder];
     }
+
+#if TARGET_OS_OSX
+    // macOS: IME composition (markedText) 期间，不要将 Compose 侧状态推回 native。
+    // native NSTextView 的 text 和 selection 是 composition 期间的唯一事实来源。
+    // 此时替换 attributedText 或调整 selectedRange 会破坏 IME 的 marked text range，
+    // 导致 IME composition 丢失，旧的拼音文本残留为普通文本，光标定位异常。
+    if (self.markedTextRange) {
+        [KRLogModule logInfo:@"[DebugCursor] css_setTextInputState SKIP during IME composition"];
+        return;
+    }
+#endif
+
     _ignoreTextDidChanged = YES;
     NSString *currentRawText = [self p_outputText];
     BOOL textChanged = ![currentRawText isEqualToString:rawText];
@@ -585,17 +598,32 @@ NSString *const KRFontWeightKey = @"fontWeight";
 }
 
 // macOS: NSTextView 在拼音输入（markedText）阶段不触发 textDidChange:，
-// 需要重写此方法手动更新 placeholder 显隐，并通知 Compose 层正在 IME 输入中
+// 需要重写此方法手动更新 placeholder 显隐。
+// 注意：这里不能发 css_textDidChange 回调！textDidChange 通道在 Compose 层
+// 会触发 onValueChange(TextFieldValue(text))，而 TextFieldValue(text) 的默认
+// selection = TextRange.Zero(0,0)，会把 Compose 内部状态的光标位置污染成 0。
+// hasMarkedText 状态改为通过 textInputStateChange 回调传递（那里有完整的
+// text + selection + composition，且 Compose 侧会设 isProcessingNativeEvent=true）。
 - (void)setMarkedText:(id)string selectedRange:(NSRange)selectedRange replacementRange:(NSRange)replacementRange {
     [super setMarkedText:string selectedRange:selectedRange replacementRange:replacementRange];
     [self p_updatePlaceholder];
-    // 通知 Compose 层 markedText 状态变化
-    if (self.css_textDidChange) {
+
+    // macOS: 通知 Compose 层 hasMarkedText 状态，通过 textInputStateChange 通道
+    // 这条通道带完整的 text/selection/composition，Compose 不会产生 selection=0 的副作用
+    if (self.css_textInputStateChange) {
         BOOL hasMarked = (self.markedRange.location != NSNotFound && self.markedRange.length > 0);
-        NSString *text = [self p_outputText].copy ?: @"";
-        NSMutableDictionary *params = [@{@"text": text, @"length": @([self p_calculateLengthForText:text])} mutableCopy];
+        NSString *rawText = [self p_outputText] ?: @"";
+        NSRange outputSelectionRange = [self p_getOutputSelectionRange];
+        NSMutableDictionary *params = [@{
+            @"text": rawText,
+            @"selectionStart": @(outputSelectionRange.location),
+            @"selectionEnd": @(NSMaxRange(outputSelectionRange)),
+            @"compositionStart": @(-1),
+            @"compositionEnd": @(-1),
+            @"length": @([self p_calculateLengthForText:rawText])
+        } mutableCopy];
         params[@"hasMarkedText"] = @(hasMarked);
-        self.css_textDidChange(params);
+        self.css_textInputStateChange(params);
     }
 }
 
@@ -764,7 +792,8 @@ NSString *const KRFontWeightKey = @"fontWeight";
             @"selectionEnd": @(NSMaxRange(outputSelectionRange)),
             @"compositionStart": @(-1),
             @"compositionEnd": @(-1),
-            @"length": @([self p_calculateLengthForText:rawText])
+            @"length": @([self p_calculateLengthForText:rawText]),
+            @"hasMarkedText": @(NO)
         });
     }
 }
