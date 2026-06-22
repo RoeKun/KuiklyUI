@@ -16,6 +16,7 @@
 #import "KRView.h"
 
 @class KRTextSelectionHelper;
+@class KRLabel;
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -61,6 +62,10 @@ extern NSString *const KRTextSelectionMethodClearSelection;
  * Called automatically when user starts selecting text via mouse.
  */
 - (void)kr_setupTextSelectionIfNeeded;
+
+#if TARGET_OS_OSX
++ (nullable KRView *)kr_resolveTextSelectionContainerForLabel:(KRLabel *)label;
+#endif
 
 @end
 

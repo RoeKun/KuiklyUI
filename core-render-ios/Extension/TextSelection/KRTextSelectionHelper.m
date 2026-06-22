@@ -18,7 +18,6 @@
 #import "KRLabel.h"
 #import "KRTextMagnifierView.h"
 #import "KRScrollView.h"
-#import "KRLogModule.h"
 #import "KRView+TextSelection.h"
 
 #define KR_ANCHOR_TAG_LEFT 1001
@@ -131,9 +130,6 @@ static void *KRTextSelectionContainerFrameObserverContext = &KRTextSelectionCont
     // Start observing containerView frame changes (e.g., screen rotation)
     [self observeContainerViewFrame];
 
-    [KRLogModule logInfo:[NSString stringWithFormat:@"[TextSelection] startSelection labels:%lu container:%@",
-                          (unsigned long)labels.count, NSStringFromClass([containerView class])]];
-
 #if TARGET_OS_OSX
     [self installMouseMonitor];
 #endif
@@ -145,8 +141,6 @@ static void *KRTextSelectionContainerFrameObserverContext = &KRTextSelectionCont
 
 - (void)selectAtPoint:(CGPoint)point type:(KRTextSelectionType)type {
     if (!self.labels || !self.containerView) {
-        [KRLogModule logInfo:[NSString stringWithFormat:@"[TextSelection] selectAtPoint failed - labels:%@ container:%@",
-                              self.labels ? @"exists" : @"nil", self.containerView ? @"exists" : @"nil"]];
         return;
     }
     
@@ -200,15 +194,11 @@ static void *KRTextSelectionContainerFrameObserverContext = &KRTextSelectionCont
         
         // Notify delegate about selection start
         [self notifyDelegateDidStartSelection];
-        
-        [KRLogModule logInfo:[NSString stringWithFormat:@"[TextSelection] selectAtPoint:(%.1f,%.1f) type:%ld range:(%ld,%ld)",
-                              point.x, point.y, (long)type, (long)selectionRange.location, (long)selectionRange.length]];
     }
 }
 
 - (void)selectAll {
     if (self.labels.count == 0) {
-        [KRLogModule logInfo:@"[TextSelection] selectAll failed - no labels"];
         return;
     }
     
@@ -222,9 +212,6 @@ static void *KRTextSelectionContainerFrameObserverContext = &KRTextSelectionCont
     
     // Notify delegate about selection start
     [self notifyDelegateDidStartSelection];
-    
-    [KRLogModule logInfo:[NSString stringWithFormat:@"[TextSelection] selectAll labels:%lu endIndex:%ld",
-                          (unsigned long)self.labels.count, (long)self.endIndex]];
 }
 
 - (void)endSelection {
@@ -235,9 +222,6 @@ static void *KRTextSelectionContainerFrameObserverContext = &KRTextSelectionCont
 #endif
 
     BOOL hadSelection = (self.labels != nil && self.containerView != nil);
-    if (hadSelection) {
-        [KRLogModule logInfo:@"[TextSelection] endSelection"];
-    }
 
     // Remove scroll observers first
     [self removeScrollViewObservers];
@@ -313,8 +297,14 @@ static const CGFloat kAnchorHitTestPadding = 20.0;
     }
 
     // 2. Update Anchors
+#if TARGET_OS_OSX
+    // macOS 上使用鼠标拖拽扩展选区，不显示触摸端的 selection anchors
+    [self.leftAnchor removeFromSuperview];
+    [self.rightAnchor removeFromSuperview];
+#else
     [self updateAnchor:self.leftAnchor forLabel:self.startLabel index:self.startIndex isStart:YES];
     [self updateAnchor:self.rightAnchor forLabel:self.endLabel index:self.endIndex isStart:NO];
+#endif
 }
 
 - (void)updateAnchor:(KRTextSelectionAnchorView *)anchor forLabel:(KRLabel *)label index:(NSInteger)index isStart:(BOOL)isStart {
@@ -501,9 +491,6 @@ static const CGFloat kAnchorHitTestPadding = 20.0;
         [self removeMagnifierView];
         // Notify delegate about selection end
         [self notifyDelegateDidEndSelection];
-
-        [KRLogModule logInfo:[NSString stringWithFormat:@"[TextSelection] panGesture ended startIdx:%ld endIdx:%ld",
-                              (long)self.startIndex, (long)self.endIndex]];
     }
 }
 
@@ -1051,19 +1038,25 @@ static const CGFloat kMagnifierVerticalOffset = 60.0;
     CGPoint local = [self.containerView convertPoint:containerPoint toView:closest];
     NSInteger idx = [self insertionIndexForPoint:local inLabel:closest];
 
+    KRLabel *anchorLabel = self.anchorLabel ?: self.startLabel;
+    NSInteger anchorIndex = self.anchorLabel ? self.anchorIndex : self.startIndex;
+
     // 始终和原始锚点比较，而非和当前 start 比较
     NSComparisonResult cmp = [self comparePositionLabel:closest index:idx
-                                              withLabel:self.startLabel index:self.startIndex];
+                                              withLabel:anchorLabel index:anchorIndex];
     if (cmp == NSOrderedDescending || cmp == NSOrderedSame) {
+        // 拖拽在锚点之后（向下）→ anchor 是 start，拖拽位置是 end
+        self.startLabel = anchorLabel;
+        self.startIndex = anchorIndex;
         self.endLabel = closest;
         self.endIndex = idx;
     } else {
-        self.endLabel = self.startLabel;
-        self.endIndex = self.startIndex;
+        // 拖拽在锚点之前（向上）→ 拖拽位置是 start，anchor 是 end
         self.startLabel = closest;
         self.startIndex = idx;
+        self.endLabel = anchorLabel;
+        self.endIndex = anchorIndex;
     }
-
 
     [self updateUI];
     [self notifyDelegateDidChangeSelection];
