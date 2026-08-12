@@ -144,11 +144,11 @@
 
 - (void)p_alertWithTitle:(NSString *)title message:(NSString *)message {
     self.disable = YES;
-#if DEBUG
     NSLog(@"%@|%@", title, message);
+#if DEBUG
     [KRConvertUtil hr_alertWithTitle:title message:message];
 #else
-    NSLog(@"Assertion failure: %@|%@ (%s:%d)", title, message, __FILE__, __LINE__);
+    NSAssert(false, @"%@|%@", title, message);
 #endif
 }
 
