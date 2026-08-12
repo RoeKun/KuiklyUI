@@ -144,13 +144,11 @@
 
 - (void)p_alertWithTitle:(NSString *)title message:(NSString *)message {
     self.disable = YES;
-    NSLog(@"%@|%@", title, message);
 #if DEBUG
+    NSLog(@"%@|%@", title, message);
     [KRConvertUtil hr_alertWithTitle:title message:message];
 #else
-    @throw [NSException exceptionWithName:NSInternalInconsistencyException
-                                   reason:[NSString stringWithFormat:@"%@|%@", title, message]
-                                 userInfo:nil];
+    NSLog(@"Assertion failure: %@|%@ (%s:%d)", title, message, __FILE__, __LINE__);
 #endif
 }
 
