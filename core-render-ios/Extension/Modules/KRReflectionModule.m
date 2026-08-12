@@ -148,7 +148,9 @@
 #if DEBUG
     [KRConvertUtil hr_alertWithTitle:title message:message];
 #else
-    NSAssert(false, [NSString stringWithFormat:@"%@|%@", title, message]);
+    @throw [NSException exceptionWithName:NSInternalInconsistencyException
+                                   reason:[NSString stringWithFormat:@"%@|%@", title, message]
+                                 userInfo:nil];
 #endif
 }
 
