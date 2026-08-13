@@ -94,6 +94,17 @@ static const NSInteger KRDefaultKeyboardAnimationCurve = 7;
 
 @end
 
+/// 圆角/描边/阴影路径随 bounds 动画平滑插值的内部辅助（实现位于 UIView(CSS)）。
+/// 单独 category 声明，避免放入 class extension 触发
+/// "Category is implementing a method which will also be implemented by its primary class"。
+@interface UIView (KRCornerPathAnim)
+- (void)kr_syncPathAnimationOnLayer:(CALayer *)targetLayer
+                          hostLayer:(CALayer *)hostLayer
+                            keyPath:(NSString *)keyPath
+                           fromPath:(CGPathRef)fromPath
+                             toPath:(CGPathRef)toPath;
+@end
+
 @implementation UIView (CSS)
 
 - (BOOL)css_setPropWithKey:(NSString *)key value:(id)value {
@@ -829,12 +840,62 @@ static const NSInteger KRDefaultKeyboardAnimationCurve = 7;
     [self p_limitMaxBorderRadisuIfNeed];
 }
 
+- (void)kr_syncPathAnimationOnLayer:(CALayer *)targetLayer
+                          hostLayer:(CALayer *)hostLayer
+                            keyPath:(NSString *)keyPath
+                           fromPath:(CGPathRef)fromPath
+                             toPath:(CGPathRef)toPath {
+    if (!targetLayer || !fromPath || !toPath || CGPathEqualToPath(fromPath, toPath)) {
+        return;
+    }
+    // 取宿主的尺寸/位置动画作为节奏基准（UIView 动画通常挂 bounds.size / bounds / position）
+    CAAnimation *base = [hostLayer animationForKey:@"bounds.size"]
+                     ?: [hostLayer animationForKey:@"bounds"]
+                     ?: [hostLayer animationForKey:@"position"];
+    if (!base) {
+        // 兜底：不同 iOS/macOS 版本 UIKit/AppKit 挂的 key 名可能不同，按前缀兜底查找
+        for (NSString *key in hostLayer.animationKeys) {
+            if ([key hasPrefix:@"bounds"] || [key hasPrefix:@"position"]) {
+                base = [hostLayer animationForKey:key];
+                break;
+            }
+        }
+    }
+    if (!base) {
+        return; // 非动画上下文：保持瞬时设置，不引入任何变化
+    }
+    CABasicAnimation *pathAnim = [CABasicAnimation animationWithKeyPath:keyPath];
+    pathAnim.fromValue = (__bridge id)fromPath;
+    pathAnim.toValue   = (__bridge id)toPath;
+    pathAnim.duration       = base.duration;
+    pathAnim.beginTime      = base.beginTime;      // 对齐 delay
+    pathAnim.timingFunction = base.timingFunction; // 对齐曲线（linear/ease/keyboard）
+    pathAnim.fillMode       = base.fillMode;
+    pathAnim.speed          = base.speed;
+    pathAnim.timeOffset     = base.timeOffset;
+    pathAnim.removedOnCompletion = YES;
+    [targetLayer addAnimation:pathAnim forKey:[@"kr_corner_" stringByAppendingString:keyPath]];
+}
+
 - (void)p_boundsDidChanged {
-    [self.layer.mask setFrame:self.bounds];
+    // —— mask 圆角：先抓旧路径，setFrame 内部会算出新路径，再补同参动画 ——
+    CALayer *mask = self.layer.mask;
+    if ([mask isKindOfClass:[CSSShapeLayer class]]) {
+        CAShapeLayer *shape = (CAShapeLayer *)mask;
+        CGPathRef fromPath = CGPathRetain(((CAShapeLayer *)shape.presentationLayer).path ?: shape.path); // 取视觉当前值
+        [shape setFrame:self.bounds];                 // 原逻辑：内部重算并设 shape.path（终值）
+        [self kr_syncPathAnimationOnLayer:shape hostLayer:self.layer keyPath:@"path"
+                                 fromPath:fromPath toPath:shape.path];
+        CGPathRelease(fromPath);
+    } else {
+        [mask setFrame:self.bounds];                  // 非圆角 mask（如 clipPath）：保持原行为
+    }
+
     if (self.layer.shadowPath) {
         // 如果存在 clipPath，shadowPath 应该使用 clipPath 的路径
         // 这样阴影形状才会和裁剪形状一致
         if (self.css_clipPath.length > 0) {
+            // clipPath 场景：任意形状、插值未验证 → 保持原瞬变，不补 path 动画
 #if TARGET_OS_OSX
             CGFloat density = [NSScreen mainScreen].backingScaleFactor ?: 1.0;
 #else
@@ -845,6 +906,8 @@ static const NSInteger KRDefaultKeyboardAnimationCurve = 7;
                 self.layer.shadowPath = clipPath.CGPath;
             }
         } else {
+            // 圆角矩形 shadow：抓旧→设新→补同参动画，随 bounds 平滑（iOS/macOS 同源同构，两端启用）
+            CGPathRef oldShadow = CGPathRetain(self.layer.shadowPath);
             #if TARGET_OS_OSX // [macOS]
             CGPathRef path = CGPathCreateWithRoundedRect(self.layer.bounds, self.layer.cornerRadius, self.layer.cornerRadius, NULL);
             self.layer.shadowPath = path;
@@ -852,6 +915,9 @@ static const NSInteger KRDefaultKeyboardAnimationCurve = 7;
             #else
             self.layer.shadowPath = [[UIBezierPath bezierPathWithRoundedRect:self.layer.bounds cornerRadius:self.layer.cornerRadius] CGPath];
             #endif // [macOS]
+            [self kr_syncPathAnimationOnLayer:self.layer hostLayer:self.layer keyPath:@"shadowPath"
+                                     fromPath:oldShadow toPath:self.layer.shadowPath];
+            CGPathRelease(oldShadow);
         }
     }
 }
@@ -1640,7 +1706,13 @@ static const NSInteger KRDefaultKeyboardAnimationCurve = 7;
         self.lineDashPattern = nil;
     }
     
-    // 7. 设置边框路径
+    // 7. 设置边框路径（补 path 动画：宿主 bounds 动画时描边随之平滑）
+    // clipPath 为任意形状、插值未验证 → 仅圆角矩形(无 clipPath)时补动画，clipPath 保持原瞬变。
+    // iOS 与 macOS 同源同构（from/to 均由本方法同分支生成），两端一并启用。
+    BOOL shouldAnimateBorder = (clipPath.length == 0);
+    CGPathRef fromBorderPath = shouldAnimateBorder
+        ? CGPathRetain(((CAShapeLayer *)self.presentationLayer).path ?: self.path)
+        : NULL;
     #if TARGET_OS_OSX // [macOS]
     if (@available(macos 14.0, *)) {
         self.path = path.CGPath;
@@ -1654,6 +1726,11 @@ static const NSInteger KRDefaultKeyboardAnimationCurve = 7;
     #else
     self.path = path.CGPath;
     #endif
+    if (shouldAnimateBorder) {
+        [self.hostView kr_syncPathAnimationOnLayer:self hostLayer:self.hostView.layer keyPath:@"path"
+                                          fromPath:fromBorderPath toPath:self.path];
+        CGPathRelease(fromBorderPath);
+    }
 }
 
 @end
