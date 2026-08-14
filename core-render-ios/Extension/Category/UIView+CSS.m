@@ -873,6 +873,9 @@ static const NSInteger KRDefaultKeyboardAnimationCurve = 7;
     pathAnim.fillMode       = base.fillMode;
     pathAnim.speed          = base.speed;
     pathAnim.timeOffset     = base.timeOffset;
+    pathAnim.repeatCount    = base.repeatCount;    // 对齐循环次数（repeatForever/多次循环时 path 与 bounds 同步循环）
+    pathAnim.repeatDuration = base.repeatDuration; // 对齐循环时长
+    pathAnim.autoreverses   = base.autoreverses;   // 对齐往返
     pathAnim.removedOnCompletion = YES;
     [targetLayer addAnimation:pathAnim forKey:[@"kr_corner_" stringByAppendingString:keyPath]];
 }
@@ -882,8 +885,16 @@ static const NSInteger KRDefaultKeyboardAnimationCurve = 7;
     CALayer *mask = self.layer.mask;
     if ([mask isKindOfClass:[CSSShapeLayer class]]) {
         CAShapeLayer *shape = (CAShapeLayer *)mask;
-        CGPathRef fromPath = CGPathRetain(((CAShapeLayer *)shape.presentationLayer).path ?: shape.path); // 取视觉当前值
+        // presentationLayer 在 layer 未入树/刚 init 时可能为 nil，回落 shape.path 取视觉当前值；
+        // 若二者皆 nil 则 fromPath 为 NULL，kr_sync 内部判空 return → 首帧瞬变一次（边缘场景，可接受）。
+        CGPathRef fromPath = CGPathRetain(((CAShapeLayer *)shape.presentationLayer).path ?: shape.path);
+        // setFrame 内部 shape.path= 若落在 UIView 动画事务窗口内会触发一条隐式 path 动画，
+        // 其 beginTime 为当前时刻、不含 UIKit 加给 bounds 的 delay，会与下方显式动画叠加，
+        // 导致 delay>0 时圆角先于 frame 动起来。用 disableActions 禁掉隐式动画，仅保留 kr_sync 这条同参显式动画。
+        [CATransaction begin];
+        [CATransaction setDisableActions:YES];
         [shape setFrame:self.bounds];                 // 原逻辑：内部重算并设 shape.path（终值）
+        [CATransaction commit];
         [self kr_syncPathAnimationOnLayer:shape hostLayer:self.layer keyPath:@"path"
                                  fromPath:fromPath toPath:shape.path];
         CGPathRelease(fromPath);
@@ -1713,6 +1724,10 @@ static const NSInteger KRDefaultKeyboardAnimationCurve = 7;
     CGPathRef fromBorderPath = shouldAnimateBorder
         ? CGPathRetain(((CAShapeLayer *)self.presentationLayer).path ?: self.path)
         : NULL;
+    // self.path= 若落在动画事务窗口内会触发一条 beginTime 不含 delay 的隐式 path 动画，
+    // 用 disableActions 禁掉，仅保留下方 kr_sync 显式同参动画，避免 delay>0 时描边先于 frame 变化。
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
     #if TARGET_OS_OSX // [macOS]
     if (@available(macos 14.0, *)) {
         self.path = path.CGPath;
@@ -1726,6 +1741,7 @@ static const NSInteger KRDefaultKeyboardAnimationCurve = 7;
     #else
     self.path = path.CGPath;
     #endif
+    [CATransaction commit];
     if (shouldAnimateBorder) {
         [self.hostView kr_syncPathAnimationOnLayer:self hostLayer:self.hostView.layer keyPath:@"path"
                                           fromPath:fromBorderPath toPath:self.path];
