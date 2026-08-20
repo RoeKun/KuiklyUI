@@ -5,11 +5,11 @@
 
 #### Scenario: iOS — 未获焦时调用 focusWithoutKeyboard
 - **WHEN** iOS 输入框（UITextField 或 UITextView）未获焦时收到 `focusWithoutKeyboard` 命令
-- **THEN** 系统 SHALL 挂载 dummy inputView (tag=99999) 并调用 `becomeFirstResponder`，输入框获得焦点（光标可见），系统键盘 SHALL 不弹出
+- **THEN** 系统 SHALL 挂载框架 dummy inputView（指针相等判定，见「iOS 业务自定义 inputView 保护」）并调用 `becomeFirstResponder`，输入框获得焦点（光标可见），系统键盘 SHALL 不弹出
 
 #### Scenario: iOS — 已获焦时调用 focusWithoutKeyboard
 - **WHEN** iOS 输入框已获焦且系统键盘可见时收到 `focusWithoutKeyboard` 命令
-- **THEN** 系统 SHALL 挂载 dummy inputView (tag=99999) 并调用 `reloadInputViews`，输入框保持焦点，系统键盘 SHALL 收起
+- **THEN** 系统 SHALL 挂载框架 dummy inputView（指针相等判定）并调用 `reloadInputViews`，输入框保持焦点，系统键盘 SHALL 收起
 
 #### Scenario: Android — 调用 focusWithoutKeyboard
 - **WHEN** Android 输入框收到 `focusWithoutKeyboard` 命令
@@ -18,6 +18,10 @@
 #### Scenario: OHOS — 调用 focusWithoutKeyboard
 - **WHEN** OHOS 输入框收到 `focusWithoutKeyboard` 命令
 - **THEN** 系统 SHALL 设置 `NODE_TEXT_INPUT_ENABLE_KEYBOARD_ON_FOCUS=0`，执行 Blur 后在下一帧 refocus（`NODE_FOCUS_STATUS=1`），输入框获得焦点且系统键盘 SHALL 不弹出
+
+#### Scenario: OHOS TEXT_EDITOR（API 24 新组件）— 调用 focusWithoutKeyboard
+- **WHEN** OHOS 多行输入框走 `ARKUI_NODE_TEXT_EDITOR` 新组件（设备 API ≥ 24 且新组件开关开启），收到 `focusWithoutKeyboard` 命令
+- **THEN** 系统 SHALL 设置 `NODE_TEXT_EDITOR_ENABLE_KEYBOARD_ON_FOCUS=0`；已聚焦时程序化失焦并在 `NODE_TEXT_EDITOR_ON_EDITING_CHANGE`（编辑停止）后 refocus，未聚焦时直接 `NODE_FOCUS_STATUS=1` 获焦，系统键盘 SHALL 全程不出现
 
 #### Scenario: OHOS — IME 拆卸尾部 blur 不上抛
 - **WHEN** OHOS `focusWithoutKeyboard` 引发的 refocus 后 150ms 内收到 IME 拆卸的尾部 blur 事件
@@ -28,7 +32,7 @@
 - **THEN** 系统 SHALL 正常上抛 blur 事件给业务层
 
 ### Requirement: iOS 业务自定义 inputView 保护
-iOS 端在执行 `focusWithoutKeyboard` 挂载 dummy inputView 前，SHALL 检查当前 `inputView` 是否为业务自定义（非 nil 且 tag ≠ 99999），若是则 SHALL 备份到 `kr_originalInputView` 属性。恢复系统键盘（`focus` 命令或 `blur` 命令）时 SHALL 还原 `kr_originalInputView`。
+iOS 端在执行 `focusWithoutKeyboard` 挂载 dummy inputView 前，SHALL 将当前 `inputView`（可能为 nil）备份到 `kr_originalInputView` 属性；是否处于免键盘获焦态 SHALL 以 `inputView` 与 `kr_dummyInputView` 指针相等判定，不使用 magic tag。恢复系统键盘（`focus` 命令）时 SHALL 还原 `kr_originalInputView`，dummy 保留复用。
 
 #### Scenario: iOS — 业务有自定义 inputView 时执行 focusWithoutKeyboard
 - **WHEN** iOS 输入框已设置业务自定义 inputView（如日期选择器），收到 `focusWithoutKeyboard` 命令
@@ -38,20 +42,24 @@ iOS 端在执行 `focusWithoutKeyboard` 挂载 dummy inputView 前，SHALL 检�
 - **WHEN** iOS 输入框处于 dummy inputView 在场状态，收到 `focus` 命令
 - **THEN** 系统 SHALL 清除 dummy inputView，还原 `kr_originalInputView`，调用 `reloadInputViews` 恢复系统键盘
 
-#### Scenario: iOS — blur 清除 dummy inputView
-- **WHEN** iOS 输入框处于 dummy inputView 在场状态，收到 `blur` 命令
-- **THEN** 系统 SHALL 清除 dummy inputView，还原 `kr_originalInputView`，然后 `resignFirstResponder` 失焦
+#### Scenario: iOS — blur 为纯 resignFirstResponder
+- **WHEN** iOS 输入框收到 `blur` 命令（无论 dummy inputView 是否在场）
+- **THEN** 系统 SHALL 仅 `resignFirstResponder` 失焦，不触碰 inputView 属性；dummy 在场时保留复用，下次 `focus` 命令走恢复分支还原业务 inputView
 
 ### Requirement: iOS 键盘通知过滤
-iOS 端在 dummy inputView (tag=99999) 在场时，SHALL 过滤 `keyboardWillShow` 和 `keyboardWillHide` 系统通知，不转发给业务层。
+iOS 端在 dummy inputView 在场（指针相等判定）时，SHALL 过滤 `keyboardWillShow` 和 `keyboardWillHide` 系统通知，不转发给业务层。
 
 #### Scenario: iOS — dummy 在场时键盘通知被过滤
-- **WHEN** iOS 输入框的 `inputView.tag == 99999` 时系统派发 `keyboardWillShow` 或 `keyboardWillHide` 通知
+- **WHEN** iOS 输入框处于 dummy inputView 在场状态（指针相等判定）时系统派发 `keyboardWillShow` 或 `keyboardWillHide` 通知
 - **THEN** 系统 SHALL 不调用 `css_keyboardHeightChange` 回调，不将键盘高度变化转发给业务层
 
 #### Scenario: iOS — dummy 不在场时键盘通知正常转发
-- **WHEN** iOS 输入框的 `inputView` 为 nil 或 tag ≠ 99999 时系统派发键盘通知
+- **WHEN** iOS 输入框的 `inputView` 不等于框架 dummy（或为 nil）时系统派发键盘通知
 - **THEN** 系统 SHALL 正常调用 `css_keyboardHeightChange` 回调转发键盘高度变化
+
+#### Scenario: iOS — 免键盘态主动上报键盘高度 0
+- **WHEN** iOS 输入框本次确实完成 dummy inputView 挂载进入免键盘获焦态
+- **THEN** 系统 SHALL 主动上报 `css_keyboardHeightChange`（height=0），与 Android / OHOS 端行为一致
 
 ### Requirement: iOS 免键盘获焦态点击恢复键盘
 iOS 端在 dummy inputView 在场时，SHALL 注册手势委托（`UIGestureRecognizerDelegate`），仅在该状态下识别点击手势，用户点击输入框时恢复系统键盘。普通态 SHALL 完全交由 UITextField / UITextView 内部手势处理。
@@ -93,6 +101,20 @@ Compose DSL 的 `CoreTextField` 在 `inputFocus` 回调中 SHALL 仅在当前未
 #### Scenario: Compose — 未聚焦时 inputFocus 回调正常回请
 - **WHEN** `CoreTextField` 未聚焦（`hasFocus == false`），原生侧触发 `inputFocus` 回调
 - **THEN** 系统 SHALL 调用 `focusRequester.requestFocus()` 回请 Compose 焦点
+
+### Requirement: blur 纯失焦语义
+`AutoHeightTextAreaView.blur()` SHALL 仅执行失焦操作（调用原生 `blur` 命令），不再接受 `keepFocus` 参数。需要「保持焦点但收起键盘」的场景 SHALL 使用 `focusWithoutKeyboard()`。
+
+#### Scenario: blur 不再保留焦点
+- **WHEN** 业务调用 `AutoHeightTextAreaView.blur()`
+- **THEN** 系统 SHALL 调用 `renderView.callMethod("blur", "")` 执行纯失焦，不保留焦点
+
+### Requirement: CoreTextField set(hasFocus) 不重复调用 focus
+Compose DSL 的 `CoreTextField` 在 `set(hasFocus)` 回调中 SHALL NOT 重复调用 `view.focus()`，因为 `startInput` 在 `onFocusChanged` 回调中已负责调用 `view.focus()`。
+
+#### Scenario: Compose — 焦点变化不重复调用原生 focus
+- **WHEN** Compose 焦点系统触发 `set(hasFocus)` 回调
+- **THEN** 系统 SHALL NOT 额外调用 `view.focus()`，避免同一次焦点事件触发两次原生 focus
 
 ### Requirement: Core 层 focusWithoutKeyboard 方法
 `AutoHeightTextAreaView` SHALL 提供 `focusWithoutKeyboard()` 方法，通过 `callMethod("focusWithoutKeyboard", "")` 桥接到各端原生实现。

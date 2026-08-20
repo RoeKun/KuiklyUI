@@ -114,7 +114,7 @@ internal fun HideKeyboardTestContent() {
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        // hide() — 默认失焦
+        // hide() — 保焦点收键盘（内部转 focusWithoutKeyboard）
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -156,9 +156,9 @@ internal fun HideKeyboardTestContent() {
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // 无焦点异步场景：requestFocus + hideKeepFocus
-        // 先通过 focusRequester 异步请求焦点，再立即调用 hideKeepFocus。
-        // 此时 activeView 尚未就绪，hideKeepFocus 打下 pendingFocusNoKeyboard 标记，
+        // 无焦点异步场景：requestFocus + hide
+        // 先通过 focusRequester 异步请求焦点，再立即调用 hide（内部转 focusWithoutKeyboard）。
+        // 此时 activeView 尚未就绪，hide 打下 pendingFocusNoKeyboard 标记，
         // 待 startInput 到达时把默认 focus() 替换为 focusWithoutKeyboard()，键盘全程不出现。
         Box(
             modifier = Modifier
