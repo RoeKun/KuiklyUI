@@ -135,11 +135,9 @@ internal class KuiklySoftwareKeyboardController : SoftwareKeyboardController {
                         activeView?.focus()
                     }
                     PendingAction.HIDE_KEYBOARD -> {
-                        // 单条自包含命令，获焦但键盘全程不出现。
-                        // 该命令自身完成获焦，后续不再单独下发 focus()，因此不会触发键盘弹起。
                         val targetView = activeView ?: pendingView
                         targetView?.focusWithoutKeyboard()
-                        // 命令已让 targetView 获焦，无条件同步 activeView
+                        // 当前仍然是获焦态，因此无条件同步 activeView，
                         activeView = pendingView
                     }
                     else -> {}

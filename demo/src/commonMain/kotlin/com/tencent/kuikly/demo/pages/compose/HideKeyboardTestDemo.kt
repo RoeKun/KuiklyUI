@@ -29,6 +29,7 @@ import com.tencent.kuikly.compose.ui.focus.focusRequester
 import com.tencent.kuikly.compose.ui.focus.onFocusChanged
 import com.tencent.kuikly.compose.ui.graphics.Color
 import com.tencent.kuikly.compose.ui.graphics.SolidColor
+import com.tencent.kuikly.compose.ui.platform.LocalFocusManager
 import com.tencent.kuikly.compose.ui.platform.LocalSoftwareKeyboardController
 import com.tencent.kuikly.compose.ui.text.TextStyle
 import com.tencent.kuikly.compose.ui.text.input.ImeAction
@@ -53,6 +54,7 @@ internal class HideKeyboardTestDemo : ComposeContainer() {
 @Composable
 internal fun HideKeyboardTestContent() {
     val keyboardController = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
     val focusRequester = remember { FocusRequester() }
     var text1 by remember { mutableStateOf("") }
     var text2 by remember { mutableStateOf("") }
@@ -177,6 +179,28 @@ internal fun HideKeyboardTestContent() {
             )
         }
 
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // 强制失焦：FocusRequester.freeFocus() 仅对 captureFocus() 捕获的焦点有效（Active 态调用无效果），
+        // Compose 焦点系统的强制失焦 API 是 FocusManager.clearFocus(force = true)。
+        // 链路：clearFocus -> 焦点系统 Exit -> View 层 css_blur -> resignFirstResponder（收键盘 + 失焦，inputView 不动）
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(44.dp)
+                .background(Color(0xFFF44336), RoundedCornerShape(8.dp))
+                .clickable {
+                    focusManager.clearFocus(force = true)
+                    statusText1 = "状态：clearFocus(force = true)（强制失焦）"
+                    statusText2 = "状态：clearFocus(force = true)（强制失焦）"
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = "clearFocus（强制失焦）",
+                style = TextStyle(fontSize = 14.sp, color = Color.White)
+            )
+        }
 
     }
 }
