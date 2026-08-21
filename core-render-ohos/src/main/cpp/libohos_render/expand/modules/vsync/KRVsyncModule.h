@@ -25,6 +25,20 @@
 namespace kuikly {
 namespace module {
 
+class KRVsyncModule;
+
+// OH_NativeVSync_RequestFrame 的用户数据。生命周期采用双引用计数
+// (pending_request_ 槽侧 + 在途回调侧)：任一方读取字段时另一方的引用最多已减到
+// 1(未归零不 delete)，保证跨线程访问内存必然存活，消除 UAF；归零者负责 delete，
+// 恰好释放一次。若系统在 Destroy 后吞掉在途回调(未文档化行为)，仅残留本结构体
+// 本身(约 40 字节)，无悬垂风险。
+struct VsyncRequestContext {
+    VsyncRequestContext(const std::weak_ptr<KRVsyncModule> &weak, uint64_t gen);
+    std::atomic<uint32_t> refs{2};
+    std::weak_ptr<KRVsyncModule> weak_module;
+    uint64_t generation;
+};
+
 /**
  * Vsync 模块：基于 OH_NativeVSync 提供系统级 vsync 回调，驱动 Kotlin 侧
  * Compose 帧调度器，使帧节拍与屏幕刷新率严格对齐（替代 Kotlin 侧 12ms Timer 轮询，
@@ -76,6 +90,8 @@ class KRVsyncModule : public IKRRenderModuleExport {
     long long last_timestamp_nanos_ = 0;
     // 最近一次有效帧间隔（异常差值时沿用）
     int32_t last_interval_nanos_ = 0;
+    // 在途 vsync 请求上下文槽（mutex_ 保护写入；生命周期见 cpp 中 VsyncRequestContext 的双引用计数协议）
+    VsyncRequestContext *pending_request_ = nullptr;
     OH_NativeVSync *native_vsync_ = nullptr;
 };
 

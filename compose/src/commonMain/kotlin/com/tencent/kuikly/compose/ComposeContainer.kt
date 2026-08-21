@@ -88,11 +88,13 @@ open class ComposeContainer :
         var enableConsumeSnapshot: Boolean = true
 
         /**
-         * 鸿蒙 native vsync 帧驱动总开关（debug/A-B 对比用）。
+         * 鸿蒙 native vsync 帧驱动总开关（debug/A-B 对比用），默认开启。
          * true: 走 native KRVsyncModule(OH_NativeVSync)，帧节拍与屏幕刷新率对齐；
          * false: 回退 12ms Timer 轮询（改造前行为），用于对比测试。
+         * 注：宿主 native 库过旧(无 KRVsyncModule)时由 watchdog 自动兜底退回
+         * 12ms Timer，行为与改造前一致，故无需按宿主灰度关闭本开关。
          */
-        var ohosUseNativeVsync: Boolean = false
+        var ohosUseNativeVsync: Boolean = true
 
         /** watchdog 超时时间：超过该时长未收到首个 vsync tick 则退回 Timer */
         private const val OHOS_VSYNC_WATCHDOG_DELAY_MS = 100
@@ -231,6 +233,9 @@ open class ComposeContainer :
             ohosVsyncTickArrived = true
             mediator?.renderFrame(frameIntervalNanos)
         }
+        // watchdog 不保存 setTimeout 返回值、不显式取消：pager 销毁时
+        // GlobalFunctions.destroyGlobalFunction(pagerId) 会清理该 pager 全部函数引用，
+        // 到期 fire 为 no-op；另有 ohosVsyncDriverStopped 同线程标志兜底，故无需 ref。
         setTimeout(pagerId, OHOS_VSYNC_WATCHDOG_DELAY_MS) {
             if (!ohosVsyncTickArrived && !ohosVsyncDriverStopped) {
                 KLog.i(
