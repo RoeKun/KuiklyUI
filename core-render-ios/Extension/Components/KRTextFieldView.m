@@ -285,9 +285,11 @@ NSString *const KRVFontWeightKey = @"fontWeight";
     _css_enablePinyinCallback = css_enablePinyinCallback;
 }
 
+#if !TARGET_OS_OSX
 - (BOOL)isExistDummyInputView {
     return self.kr_dummyInputView != nil && self.inputView == self.kr_dummyInputView;
 }
+#endif
 
 #pragma mark - 恢复键盘
 
@@ -380,6 +382,7 @@ NSString *const KRVFontWeightKey = @"fontWeight";
 #pragma mark - dummy inputView
 
 /// Kuikly trick view 用于「获焦但不弹键盘」：挂 dummy inputView，未获焦时补 becomeFirstResponder
+#if !TARGET_OS_OSX
 - (BOOL)p_attachDummyInputView {
     // 幂等：已处于免键盘获焦态则直接返回，避免重复挂载/重复 reloadInputViews 引发键盘闪烁
     if ([self isExistDummyInputView]) {
@@ -404,6 +407,7 @@ NSString *const KRVFontWeightKey = @"fontWeight";
     }
     return YES;
 }
+#endif
 
 - (void)css_getCursorIndex:(NSDictionary *)args {
     KuiklyRenderCallback callback = args[KRC_CALLBACK_KEY];
