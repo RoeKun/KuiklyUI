@@ -555,7 +555,7 @@ static UIView *gBaseView = nil;
     if (diffPolicy != KRRealFirstScreenDiffEventReplay) {
         if (curNode.tag && newNode.tag && ![newNode.tag isEqual:curNode.tag]) {
             [renderLayer updateViewTagWithCurTag:curNode.tag newTag:newNode.tag];
-            curNode.tag = newNode.tag;
+//            curNode.tag = newNode.tag;
         }
     }
     // 属性全量更新
