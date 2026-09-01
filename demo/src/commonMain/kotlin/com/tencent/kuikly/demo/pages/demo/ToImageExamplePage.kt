@@ -65,6 +65,32 @@ internal class ToImageExamplePage : BasePager() {
         }
     }
 
+    // H5-only: verify the new toImageScaled API which supports an output
+    // upscale factor instead of sampleSize.
+    private fun runToImageScaledTest(
+        type: DeclarativeBaseView.ImageType,
+        scale: Float,
+        label: String
+    ) {
+        alternating = !alternating
+        viewRef?.view?.toImageScaled(type, scale) {
+            val code = it?.optInt("code") ?: -1
+            val data = it?.optString("data") ?: ""
+            val message = it?.optString("message") ?: ""
+            val success = code == 0 && data.isNotEmpty()
+
+            KLog.d(
+                TAG,
+                "toImageScaled[$label], success: $success, code: $code, scale: $scale, data: $data, message: $message"
+            )
+
+            snapshotInfo = "[$label] code=$code, scale=$scale, message=$message"
+            if (success) {
+                snapshotResultSrc = data
+            }
+        }
+    }
+
     override fun body(): ViewBuilder {
         val ctx = this
         return {
@@ -275,6 +301,62 @@ internal class ToImageExamplePage : BasePager() {
                         event {
                             click {
                                 ctx.runToImageTest(DeclarativeBaseView.ImageType.DATA_URI, 2, "DATA_URI")
+                            }
+                        }
+                    }
+
+                    // H5-only: caller-requested upscale factor via the new
+                    // toImageScaled API. Default 1.0 keeps behavior identical to
+                    // toImage. Larger values yield a higher-resolution snapshot
+                    // (bounded internally by MAX_CANVAS_SIDE).
+                    View {
+                        attr {
+                            marginTop(8.0f)
+                            padding(10.0f)
+                            borderRadius(8.0f)
+                            allCenter()
+                            backgroundColor(Color(0xFF3949AB))
+                        }
+                        Text {
+                            attr {
+                                fontSize(14.0f)
+                                color(Color.WHITE)
+                                text("toImageScaled DATA_URI (scale=2.0)")
+                            }
+                        }
+                        event {
+                            click {
+                                ctx.runToImageScaledTest(
+                                    DeclarativeBaseView.ImageType.DATA_URI,
+                                    2.0f,
+                                    "Scaled-DATA_URI-2x"
+                                )
+                            }
+                        }
+                    }
+
+                    View {
+                        attr {
+                            marginTop(8.0f)
+                            padding(10.0f)
+                            borderRadius(8.0f)
+                            allCenter()
+                            backgroundColor(Color(0xFFD81B60))
+                        }
+                        Text {
+                            attr {
+                                fontSize(14.0f)
+                                color(Color.WHITE)
+                                text("toImageScaled DATA_URI (scale=3.0)")
+                            }
+                        }
+                        event {
+                            click {
+                                ctx.runToImageScaledTest(
+                                    DeclarativeBaseView.ImageType.DATA_URI,
+                                    3.0f,
+                                    "Scaled-DATA_URI-3x"
+                                )
                             }
                         }
                     }
