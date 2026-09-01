@@ -18,10 +18,6 @@
 @implementation KRCalendarModule
 
 
-- (NSCalendar *)localCalendar {
-    return [[NSCalendar alloc] initWithCalendarIdentifier:NSCalendarIdentifierChinese];
-}
-
 /** 公历日历，时区需与 dateFromString / stringFromDate 保持一致 */
 - (NSCalendar *)gregorianCalendar {
     NSCalendar *calendar = [[NSCalendar alloc] initWithCalendarIdentifier:NSCalendarIdentifierGregorian];
@@ -59,7 +55,7 @@
                 case 11: components.hour = value; break;
                 case 12: components.minute = value; break;
                 case 13: components.second = value; break;
-                case 14: components.nanosecond = value * 1000000; break;
+                case 14: components.nanosecond = (long long)value * 1000000; break;
                 default: break;
             }
         } else if ([opt isEqualToString:@"add"]) {
@@ -73,7 +69,7 @@
                 case 11: delta.hour = value; break;
                 case 12: delta.minute = value; break;
                 case 13: delta.second = value; break;
-                case 14: delta.nanosecond = value * 1000000; break;
+                case 14: delta.nanosecond = (long long)value * 1000000; break;
                 default: break;
             }
             NSDate *next = [calendar dateByAddingComponents:delta toDate:current options:0];
@@ -101,7 +97,7 @@
 }
 
 - (NSString *)method_cur_timestamp:(NSDictionary *)args {
-    return [NSString stringWithFormat:@"%ld", (NSInteger)([[NSDate date] timeIntervalSince1970] * 1000)];
+    return [NSString stringWithFormat:@"%lld", (long long)([[NSDate date] timeIntervalSince1970] * 1000)];
 }
 
 - (NSString *)method_get_field:(NSDictionary *)args {
@@ -125,7 +121,8 @@
             return [self stringFromDate:date format:@"D"];
         }
         case 7: { // dayOfWeek
-            NSCalendar *calendar = [NSCalendar currentCalendar];
+            // 用系统时区而非 gregorianCalendar(Asia/Shanghai)：与 Android Calendar.getInstance() 口径一致，星期受时区跨日影响
+            NSCalendar *calendar = [NSCalendar calendarWithIdentifier:NSCalendarIdentifierGregorian];
             NSDateComponents *components = [calendar components:NSCalendarUnitWeekday fromDate:date];
             NSInteger dayOfWeek = [components weekday];
             return [NSString stringWithFormat:@"%ld", (long)dayOfWeek];
@@ -170,7 +167,7 @@
 - (NSString *)method_parse_format:(NSDictionary *)args {
     NSDictionary *params = [args[KR_PARAM_KEY] kr_stringToDictionary];
     NSDate *date = [self dateFromString:params[@"formattedTime"] format:params[@"format"]];
-    return [NSString stringWithFormat:@"%ld", (NSInteger)([date timeIntervalSince1970] * 1000L)];
+    return [NSString stringWithFormat:@"%lld", (long long)([date timeIntervalSince1970] * 1000)];
 }
 
 
