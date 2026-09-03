@@ -468,8 +468,8 @@
                                                  fromNodeTree:_realRootNode
                                                        config:_config];
     } else {
-        // 兜底：快照树已被丢弃（clearCurrentPageCache 清除缓存后基础状态已重置），无基础状态参照，
-        // 以当前真实树为快照（保持原手动采集当前 UI 语义）
+        // 兜底：快照树尚未初始化（viewDidLoad 前 diffPatchToRenderLayer 未执行时极早期调用），
+        // 无基础状态参照，以当前真实树为快照（保持原手动采集当前 UI 语义）
         _nextTurboDisplayRootNode = [_realRootNode deepCopy];
     }
 
@@ -511,13 +511,11 @@
     if (notification.object != _rootView) {
         return;
     }
+    // 【修复】清除缓存 = 仅抹除已存在的缓存（磁盘文件 + 内存副本），不改采集机制状态：
+    // 快照树与自动更新保持运行，后续状态变化由自动采集重建新缓存，
+    // 使业务可将 clearCurrentPageCache 作为"重新开始存储"的先行处理手段。
     [[KRTurboDisplayCacheManager sharedInstance] removeCacheWithKey:self.turboDisplayCacheKey];
     self.turboDisplayCacheData = nil;
-    _nextTurboDisplayRootNode = nil;
-    
-    // 缓存清除后，可开启自动更新
-    _closeAutoUpdateTurboDisplay = YES;
-    [_config closeAutoUpdateTurboDisplay];
 }
 
 #pragma mark - TurboDisplay rendering
