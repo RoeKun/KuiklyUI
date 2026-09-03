@@ -436,7 +436,10 @@
         _closeAutoUpdateTurboDisplay = YES;
         [_config closeAutoUpdateTurboDisplay];
         
-        _nextTurboDisplayRootNode = nil;
+        // 【修复】不再丢弃快照树：保留基础状态参照，使手势后的手动刷新
+        // setCurrentUIAsFirstScreenForNextLaunch 仍走受 turboDisplayAutoUpdateEnable
+        // 节点级过滤的 diff 路径（此前置 nil 会使手动刷新落入全量缓存真实树的兜底分支，过滤失效）。
+        // 自动更新已由 _closeAutoUpdateTurboDisplay 关闭，保留快照树不会触发额外写盘。
     }
 }
 
@@ -465,7 +468,7 @@
                                                  fromNodeTree:_realRootNode
                                                        config:_config];
     } else {
-        // 兜底：快照树已被丢弃（didHitTest / clearCurrentPageCache），无基础状态参照，
+        // 兜底：快照树已被丢弃（clearCurrentPageCache 清除缓存后基础状态已重置），无基础状态参照，
         // 以当前真实树为快照（保持原手动采集当前 UI 语义）
         _nextTurboDisplayRootNode = [_realRootNode deepCopy];
     }
