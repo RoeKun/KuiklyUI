@@ -368,6 +368,7 @@ export const zhSidebar = sidebar({
                 { text: "2.12.0", link: "/ChangeLog/2.12.0/changelog.md" },
                 { text: "2.11.0", link: "/ChangeLog/2.11.0/changelog.md" },
                 { text: "2.10.0", link: "/ChangeLog/2.10.0/changelog.md" },
+                { text: "2.4.0", link: "/ChangeLog/2.4.0/changelog.md" },
             ],
         },
     ]
